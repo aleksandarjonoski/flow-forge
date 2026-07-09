@@ -160,13 +160,29 @@ JSON file ──parse──► Flow struct ──validate──► CompiledFlow 
 `flow.Parse(r io.Reader) (*Flow, error)` — straight `encoding/json` decode.
 
 ### 4.2 Validate
-`flow.Validate(f *Flow, reg *Registry) error` checks:
+`engine.Validate(f *flow.Flow, reg *Registry) error` checks (without
+instantiating any node):
 1. All `Node.Type` values are registered.
 2. Every edge endpoint references an existing node.
-3. No node has the same `ID` twice.
+3. No node has more than one inbound edge (merge nodes are deferred — §10).
 4. The graph is a **DAG** (cycle detection — see §6).
-5. There is **at least one trigger** node.
-6. Triggers have no incoming edges.
+
+All errors are joined via `errors.Join` so a single pass surfaces every
+problem.
+
+Instantiation-dependent checks are performed by `engine.Compile` (§4.3):
+- There is at least one trigger node.
+- Triggers have no inbound edges.
+- Every node implements exactly one of `ActionNode` / `TriggerNode`.
+
+**Layering note:** The validator lives in `engine/`, not `flow/`, because
+cycle detection depends on the graph algorithms in `engine/topo.go`. Putting
+the validator in `flow/` would force either a circular import or a third
+shared package. `flow` stays purely the document model; `engine` owns all
+graph-level semantics.
+
+Duplicate-node-ID checks happen earlier, in `flow.Parse`, since they don't
+require any registry context.
 
 ### 4.3 Compile
 Validation produces a `CompiledFlow`:
@@ -176,8 +192,8 @@ type CompiledFlow struct {
     Flow      *flow.Flow
     Nodes     map[string]Node       // nodeID → instantiated node (Init'd)
     Adjacency map[string][]string   // nodeID → downstream nodeIDs
-    Triggers  []string              // nodeIDs of triggers
-    TopoOrder []string              // global topological order (for action graph)
+    Triggers  []string              // nodeIDs of triggers (sorted)
+    TopoOrder map[string][]string   // triggerID → topo-sorted reachable subgraph (incl. trigger)
 }
 ```
 
@@ -391,10 +407,10 @@ backend/
 ├── internal/
 │   ├── flow/
 │   │   ├── flow.go            # structs
-│   │   ├── parser.go          # JSON → Flow
-│   │   └── validator.go       # cycle/edge/type checks
+│   │   └── parser.go          # JSON → Flow (+ basic structural checks)
 │   ├── engine/
 │   │   ├── engine.go          # Engine, Run, Stop
+│   │   ├── validate.go        # graph-level validation (cycles, edges, types)
 │   │   ├── compile.go         # Flow → CompiledFlow
 │   │   ├── executor.go        # per-execution runner
 │   │   ├── context.go         # ExecutionContext
@@ -434,7 +450,7 @@ Suggested commit slices, each independently runnable/testable:
 1. `flow` package — structs + parser + tests against the v1 JSON schema.
 2. `engine/topo.go` — cycle detection + topo sort + reachability + tests on hand-built graphs.
 3. `engine/registry.go` + `engine/trace.go` — registry, trace events, stdout sink.
-4. `engine/compile.go` + `flow/validator.go` — Flow → CompiledFlow with full validation.
+4. `engine/validate.go` + `engine/compile.go` — Flow → CompiledFlow with full validation.
 5. `engine/executor.go` — single-execution runner against a hardcoded in-memory trigger that fires once.
 6. `nodes/log.go` + `nodes/transform.go` — pure nodes, no I/O. Wire end-to-end with a fake trigger.
 7. `engine/services.go` + `nodes/http_trigger.go` — real HTTP server, real trigger.
