@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { TraceEvent } from './client.ts'
-import { executionDurationNs, formatDuration, nodeRuns } from './trace.ts'
+import {
+  executionDurationNs,
+  formatDuration,
+  nodeRuns,
+  runMarks,
+} from './trace.ts'
 
 const ts = '2026-10-31T00:00:00Z'
 const ev = (e: Partial<TraceEvent> & Pick<TraceEvent, 'kind'>): TraceEvent => ({
@@ -89,5 +94,38 @@ describe('formatDuration', () => {
     expect(formatDuration(12_340_000)).toBe('12.3 ms')
     expect(formatDuration(1_204_000_000)).toBe('1.20 s')
     expect(formatDuration(undefined)).toBe('')
+  })
+})
+
+describe('runMarks', () => {
+  const trace = [
+    ev({ kind: 'execution_started', nodeId: 't', nodeType: 'http_trigger' }),
+    ev({ kind: 'node_started', nodeId: 'a', nodeType: 'transform' }),
+    ev({ kind: 'node_completed', nodeId: 'a', nodeType: 'transform' }),
+    ev({ kind: 'node_started', nodeId: 'b', nodeType: 'log' }),
+  ]
+
+  it('marks nodes as the run goes, leaving unreached ones unmarked', () => {
+    expect([...runMarks(trace, ['t', 'a', 'b', 'c'], false)]).toEqual([
+      ['t', 'done'],
+      ['a', 'done'],
+      ['b', 'running'],
+    ])
+  })
+
+  it('marks unreached nodes skipped once the run has finished', () => {
+    const failed = [
+      ...trace,
+      ev({ kind: 'node_failed', nodeId: 'b', nodeType: 'log', error: 'x' }),
+      ev({ kind: 'execution_failed' }),
+    ]
+    expect(
+      Object.fromEntries(runMarks(failed, ['t', 'a', 'b', 'c'], true)),
+    ).toEqual({
+      t: 'done',
+      a: 'done',
+      b: 'failed',
+      c: 'skipped',
+    })
   })
 })

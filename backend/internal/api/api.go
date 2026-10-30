@@ -45,11 +45,17 @@ type runRequest struct {
 	Payload engine.Payload  `json:"payload"`
 }
 
+// runResult is how a run ended. It is the final "result" event of a stream.
+type runResult struct {
+	ExecutionID string `json:"executionId"`
+	Status      string `json:"status"` // "completed" or "failed"
+	Error       string `json:"error,omitempty"`
+}
+
+// runResponse is the JSON (non-streaming) answer: the result plus the trace.
 type runResponse struct {
-	ExecutionID string              `json:"executionId"`
-	Status      string              `json:"status"` // "completed" or "failed"
-	Error       string              `json:"error,omitempty"`
-	Trace       []engine.TraceEvent `json:"trace"`
+	runResult
+	Trace []engine.TraceEvent `json:"trace"`
 }
 
 type errorResponse struct {
@@ -58,7 +64,9 @@ type errorResponse struct {
 }
 
 // run executes one test run: the chosen trigger fires once with the given
-// payload. Triggers are compiled but never started. See docs/api-v1.md.
+// payload. Triggers are compiled but never started. The answer is one JSON
+// body, or a Server-Sent Events stream when the client accepts
+// text/event-stream. See docs/api-v1.md.
 func (h *handler) run(w http.ResponseWriter, r *http.Request) {
 	var req runRequest
 	if status, err := decode(w, r, &req); err != nil {
@@ -90,20 +98,79 @@ func (h *handler) run(w http.ResponseWriter, r *http.Request) {
 		payload = engine.Payload{}
 	}
 
+	// The request context is cancelled when the client disconnects, which
+	// cancels the run too (engine-v1.md §9).
 	ctx, cancel := context.WithTimeout(r.Context(), h.runTimeout)
 	defer cancel()
+
+	if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.WriteHeader(http.StatusOK)
+		sink := &sseSink{w: w, rc: http.NewResponseController(w)}
+		sink.flush()
+		execErr := engine.NewExecutor(cf, sink).Execute(ctx, trigger, payload)
+		sink.event("result", result(sink.executionID, execErr))
+		return
+	}
+
 	sink := engine.NewMemoryTraceSink()
 	execErr := engine.NewExecutor(cf, sink).Execute(ctx, trigger, payload)
+	trace := sink.Events()
+	var id string
+	if len(trace) > 0 {
+		id = trace[0].ExecutionID
+	}
+	writeJSON(w, http.StatusOK, runResponse{runResult: result(id, execErr), Trace: trace})
+}
 
-	resp := runResponse{Status: "completed", Trace: sink.Events()}
-	if len(resp.Trace) > 0 {
-		resp.ExecutionID = resp.Trace[0].ExecutionID
-	}
+func result(executionID string, execErr error) runResult {
+	res := runResult{ExecutionID: executionID, Status: "completed"}
 	if execErr != nil {
-		resp.Status = "failed"
-		resp.Error = execErr.Error()
+		res.Status = "failed"
+		res.Error = execErr.Error()
 	}
-	writeJSON(w, http.StatusOK, resp)
+	return res
+}
+
+// sseSink writes each trace event to the response as a Server-Sent Event
+// and flushes it, so the client sees the run as it happens. The executor
+// emits from the request's goroutine, so no locking is needed. After a
+// failed write (client gone) it stops writing; the run itself is cancelled
+// through the request context.
+type sseSink struct {
+	w           io.Writer
+	rc          *http.ResponseController
+	executionID string
+	broken      bool
+}
+
+func (s *sseSink) Emit(e engine.TraceEvent) {
+	if s.executionID == "" {
+		s.executionID = e.ExecutionID
+	}
+	s.event("trace", e)
+}
+
+func (s *sseSink) event(name string, v any) {
+	if s.broken {
+		return
+	}
+	data, err := json.Marshal(v)
+	if err != nil {
+		return
+	}
+	if _, err := fmt.Fprintf(s.w, "event: %s\ndata: %s\n\n", name, data); err != nil {
+		s.broken = true
+		return
+	}
+	s.flush()
+}
+
+func (s *sseSink) flush() {
+	if err := s.rc.Flush(); err != nil {
+		s.broken = true
+	}
 }
 
 // pickTrigger returns the trigger to fire: the requested one, or the only

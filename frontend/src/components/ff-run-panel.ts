@@ -1,6 +1,6 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { customElement, property } from 'lit/decorators.js'
-import type { RunOutcome } from '../api/client.ts'
+import type { RunOutcome, TraceEvent } from '../api/client.ts'
 import {
   executionDurationNs,
   formatDuration,
@@ -9,15 +9,21 @@ import {
 } from '../api/trace.ts'
 import type { Flow } from '../flow/types.ts'
 
-/** What the panel shows: a run in progress, or how it ended. */
+/**
+ * What the panel shows: a run in progress with the trace so far, or how it
+ * ended.
+ */
 export type RunState =
-  { phase: 'running' } | { phase: 'done'; outcome: RunOutcome }
+  | { phase: 'running'; trace: TraceEvent[] }
+  | { phase: 'done'; outcome: RunOutcome }
 
 /**
  * Results of a test run: overall status, then one row per node that ran with
- * its duration and output (or error). See "Test runs" in docs/design.md.
+ * its duration and output (or error). Rows appear while the run streams in.
+ * See "Test runs" and "Live execution view" in docs/design.md.
  *
  * @fires close - the user closed the panel
+ * @fires node-select - detail is the ID of the node whose row was clicked
  */
 @customElement('ff-run-panel')
 export class FfRunPanel extends LitElement {
@@ -141,7 +147,11 @@ export class FfRunPanel extends LitElement {
           ×
         </button>
       </header>
-      ${state.phase === 'done' ? this.renderBody(state.outcome) : nothing}
+      ${
+        state.phase === 'done'
+          ? this.renderBody(state.outcome)
+          : this.renderRuns(state.trace)
+      }
     `
   }
 
@@ -171,25 +181,41 @@ export class FfRunPanel extends LitElement {
         : nothing
     }
     return html`
-      <ol>
-        ${nodeRuns(outcome.result.trace).map((run) => this.renderRun(run))}
-      </ol>
+      ${this.renderRuns(outcome.result.trace)}
       <div class="muted">Execution ${outcome.result.executionId}</div>
     `
   }
 
+  private renderRuns(trace: TraceEvent[]) {
+    return html`<ol>
+      ${nodeRuns(trace).map((run) => this.renderRun(run))}
+    </ol>`
+  }
+
   private renderRun(run: NodeRun) {
     const node = this.flow?.nodes.find((n) => n.id === run.nodeId)
+    const running = this.run?.phase === 'running'
     const label = {
       trigger: html`<span class="muted">emitted</span>`,
-      running: html`<span class="muted">did not finish</span>`,
+      running: html`<span class="muted"
+        >${running ? 'running…' : 'did not finish'}</span
+      >`,
       completed: html`<span class="ok">✓</span>`,
       failed: html`<span class="bad">✗ failed</span>`,
     }[run.status]
     return html`
       <li data-node=${run.nodeId}>
         <details ?open=${run.status === 'failed'}>
-          <summary>
+          <summary
+            @click=${() =>
+              this.dispatchEvent(
+                new CustomEvent('node-select', {
+                  detail: run.nodeId,
+                  bubbles: true,
+                  composed: true,
+                }),
+              )}
+          >
             ${label}
             <span class="name">${node?.name || run.nodeId}</span>
             <span class="type">${run.nodeType}</span>

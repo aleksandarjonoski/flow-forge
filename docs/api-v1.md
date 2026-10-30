@@ -50,3 +50,26 @@ Responses:
 - **`413 Payload Too Large`** — request body over 1 MiB.
 
 A run is limited to 60 seconds; a run that takes longer is cancelled and reported as `failed` (the engine's cancellation, engine-v1.md §9).
+
+### Streaming (`Accept: text/event-stream`)
+
+With `Accept: text/event-stream`, a run that gets past validation is answered with `200` and a [Server-Sent Events](https://html.spec.whatwg.org/multipage/server-sent-events.html) stream instead of one JSON body, so the editor can show the run while it happens:
+
+```
+event: trace
+data: {"kind":"execution_started","executionId":"af34…","nodeId":"node-1",…}
+
+event: trace
+data: {"kind":"node_started",…}
+
+…
+
+event: result
+data: {"executionId":"af34…","status":"completed"}
+```
+
+- One `trace` event per trace event, sent as soon as the engine emits it. `data` is the same JSON object as an entry of `trace` in the JSON response.
+- One final `result` event: the JSON response without `trace`. The stream then ends.
+- Errors found before the run starts (`400`, `413`) are still plain JSON responses, as above; the client tells them apart by `Content-Type`.
+- If the client disconnects, the run is cancelled (engine-v1.md §9).
+- The endpoint stays a `POST`, so the browser reads the stream with `fetch` rather than `EventSource` (which can only `GET`).

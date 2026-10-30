@@ -11,7 +11,8 @@ import {
   setNodeName,
   withEdgeIds,
 } from '../flow/edit.ts'
-import { runFlow } from '../api/client.ts'
+import { runFlow, type TraceEvent } from '../api/client.ts'
+import { runMarks } from '../api/trace.ts'
 import {
   FlowParseError,
   defaultFileName,
@@ -301,6 +302,7 @@ export class FfApp extends LitElement {
             .flow=${this.flow}
             .docKey=${this.docKey}
             .selected=${node?.id}
+            .marks=${this.marks}
             @flow-change=${(e: CustomEvent<Flow>) => (this.flow = e.detail)}
             @node-select=${(e: CustomEvent<string | null>) =>
               (this.selected = e.detail ?? undefined)}
@@ -313,6 +315,8 @@ export class FfApp extends LitElement {
                   .run=${this.run.state}
                   .flow=${this.run.flow}
                   @close=${() => (this.run = undefined)}
+                  @node-select=${(e: CustomEvent<string>) =>
+                    (this.selected = e.detail)}
                 ></ff-run-panel>`
               : nothing
           }
@@ -367,10 +371,30 @@ export class FfApp extends LitElement {
   private async startRun({ trigger, payload }: RunRequest) {
     const seq = ++this.runSeq
     const flow = this.flow
-    this.run = { state: { phase: 'running' }, flow }
-    const outcome = await runFlow(flow, trigger, payload)
+    let trace: TraceEvent[] = []
+    this.run = { state: { phase: 'running', trace }, flow }
+    const outcome = await runFlow(flow, trigger, payload, (event) => {
+      if (seq !== this.runSeq) return
+      trace = [...trace, event]
+      this.run = { state: { phase: 'running', trace }, flow }
+    })
     if (seq !== this.runSeq) return
     this.run = { state: { phase: 'done', outcome }, flow }
+  }
+
+  // marks derives the canvas marks from the latest run, if any.
+  private get marks() {
+    const state = this.run?.state
+    if (!state) return undefined
+    if (state.phase === 'running') {
+      return runMarks(state.trace, [], false)
+    }
+    if (!state.outcome.ok) return undefined
+    return runMarks(
+      state.outcome.result.trace,
+      this.flow.nodes.map((n) => n.id),
+      true,
+    )
   }
 
   // load replaces the document: new flow, nothing selected, canvas refit.

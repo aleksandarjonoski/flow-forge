@@ -22,6 +22,7 @@ import {
   removeEdge,
 } from '../flow/edit.ts'
 import { FlowLoadError, flowToGraph, type Graph } from '../flow/to-graph.ts'
+import type { RunMark } from '../api/trace.ts'
 import type { Flow, Position } from '../flow/types.ts'
 
 /** Node and connection types used by the editor. */
@@ -103,6 +104,65 @@ export class FfCanvas extends LitElement {
       padding-left: 1.25rem;
     }
 
+    /* Test-run marks (docs/design.md, "Live execution view"), set as
+       data-run on each node's view element. */
+    [data-run] {
+      transition:
+        filter 0.2s,
+        opacity 0.2s;
+    }
+
+    [data-run='running'] {
+      animation: pulse 1s ease-in-out infinite alternate;
+    }
+
+    [data-run='done'] {
+      filter: drop-shadow(0 0 3px #2a7) drop-shadow(0 0 6px #2a7);
+    }
+
+    [data-run='failed'] {
+      filter: drop-shadow(0 0 3px #d33) drop-shadow(0 0 8px #d33);
+    }
+
+    [data-run='skipped'] {
+      opacity: 0.4;
+    }
+
+    [data-run='done']::after,
+    [data-run='failed']::after {
+      position: absolute;
+      top: -0.5rem;
+      right: -0.5rem;
+      width: 1.375rem;
+      height: 1.375rem;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      color: white;
+      font:
+        bold 0.875rem/1 system-ui,
+        sans-serif;
+    }
+
+    [data-run='done']::after {
+      content: '✓';
+      background: #2a7;
+    }
+
+    [data-run='failed']::after {
+      content: '✗';
+      background: #d33;
+    }
+
+    @keyframes pulse {
+      from {
+        filter: drop-shadow(0 0 2px #39f);
+      }
+      to {
+        filter: drop-shadow(0 0 6px #39f) drop-shadow(0 0 12px #39f);
+      }
+    }
+
     .empty {
       position: absolute;
       inset: 0;
@@ -127,6 +187,10 @@ export class FfCanvas extends LitElement {
   /** The flow to display. */
   @property({ attribute: false })
   flow?: Flow
+
+  /** Test-run state per node ID, shown as marks on the nodes. */
+  @property({ attribute: false })
+  marks?: Map<string, RunMark>
 
   /** Identifies the document; changing it rebuilds the canvas and zooms to fit. */
   @property({ attribute: false })
@@ -279,6 +343,9 @@ export class FfCanvas extends LitElement {
     if (changed.has('selected')) {
       this.loading = this.loading.then(() => this.highlight(this.selected))
     }
+    if (changed.has('marks')) {
+      this.loading = this.loading.then(() => this.applyMarks())
+    }
   }
 
   // trackEdits turns editor events caused by the user into Flow edits.
@@ -405,6 +472,16 @@ export class FfCanvas extends LitElement {
       this.drawing = false
     }
     await this.highlight(this.selected)
+    this.applyMarks()
+  }
+
+  // applyMarks sets each node view's data-run attribute from `marks`.
+  private applyMarks() {
+    for (const [id, view] of this.area?.nodeViews ?? []) {
+      const mark = this.marks?.get(id)
+      if (mark) view.element.dataset.run = mark
+      else delete view.element.dataset.run
+    }
   }
 
   // apply brings the editor's nodes and connections in line with graph.

@@ -77,3 +77,32 @@ export function formatDuration(ns: number | undefined): string {
   if (ms < 1000) return `${ms.toFixed(1)} ms`
   return `${(ms / 1000).toFixed(2)} s`
 }
+
+/** How a node is marked on the canvas after (or during) a run. */
+export type RunMark = 'running' | 'done' | 'failed' | 'skipped'
+
+/**
+ * Marks every node of a flow for the canvas: running, done (including the
+ * trigger once it has emitted) or failed per the trace so far. Once the run
+ * has finished, nodes it did not reach are "skipped"; while it is still
+ * going they are left unmarked.
+ */
+export function runMarks(
+  trace: TraceEvent[],
+  nodeIds: string[],
+  finished: boolean,
+): Map<string, RunMark> {
+  const marks = new Map<string, RunMark>()
+  for (const run of nodeRuns(trace)) {
+    marks.set(
+      run.nodeId,
+      run.status === 'trigger' || run.status === 'completed'
+        ? 'done'
+        : run.status,
+    )
+  }
+  if (finished) {
+    for (const id of nodeIds) if (!marks.has(id)) marks.set(id, 'skipped')
+  }
+  return marks
+}

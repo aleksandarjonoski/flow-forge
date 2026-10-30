@@ -82,13 +82,13 @@ What FlowForge *can do* at each milestone. Each phase is a meaningful product st
 - CLI: `flowforge run flow.json`.
 - Trace events emitted to stdout as JSON lines.
 
-### Phase 2 — Visual Editor MVP (current)
+### Phase 2 — Visual Editor MVP ✅
 - Browser-based canvas: drag nodes, connect edges, edit properties.
 - Save flow JSON to disk via backend API.
 - Load existing flow JSON for editing.
 - Run a flow from the UI. Watch the trace events live.
 
-### Phase 3 — Server + Storage
+### Phase 3 — Server + Storage (next)
 - Persistent flow library in SQLite.
 - REST API: CRUD flows, start/stop a flow, list executions.
 - Multiple flows hosted by one server process.
@@ -285,7 +285,7 @@ The 10 engine slices defined in [engine-v1.md §15](engine-v1.md#L294). Recapped
 
 **Phase 1 done when:** `flowforge run examples/hello.flow.json` starts a server, accepts a POST to `/webhook`, runs a transform, and logs the result. No UI.
 
-### Phase 2 — Visual Editor MVP (current)
+### Phase 2 — Visual Editor MVP ✅
 Frontend lives in `frontend/` next to `backend/`. Same repo (monorepo decision documented separately).
 
 | # | Slice | Notes | Status |
@@ -298,7 +298,7 @@ Frontend lives in `frontend/` next to `backend/`. Same repo (monorepo decision d
 | 6 | Save/load to local file (download/upload JSON) | No backend required yet; canonical JSON so saved files diff cleanly | ✅ done |
 | 7 | Node palette (drag a new node onto the canvas) | Types from the frontend catalog; also New flow, deleting nodes, editable flow name | ✅ done |
 | 8 | "Run" button → POST to backend `/flows/run` | Test run: fire one trigger once with a chosen payload, return the trace — see [api-v1.md](api-v1.md); `flowforge serve` hosts the API | ✅ done |
-| 9 | Live execution view (trace events streamed via SSE/WS) | First glimpse of the step-debugger | next |
+| 9 | Live execution view (trace events streamed via SSE/WS) | SSE on the run endpoint; node states shown live on the canvas | ✅ done |
 
 **Phase 2 done when:** a user can build the same `hello` flow visually, hit Run, and see the trace stream in real time.
 
@@ -360,7 +360,12 @@ Frontend lives in `frontend/` next to `backend/`. Same repo (monorepo decision d
 - **Run…** in the header opens a dialog to pick the trigger (when the flow has more than one) and edit the payload it emits, as JSON. The payload starts from a sample for the trigger type, taken from the catalog: `{headers, query, body}` for `http_trigger`, `{firedAt}` for `cron_trigger`. Run is disabled while the flow has no trigger.
 - The editor sends the **current** flow, saved or not, to `POST /api/flows/run` ([api-v1.md](api-v1.md)). The backend executes that trigger's path once and returns the trace; nothing is left running.
 - The result opens in a panel below the canvas: overall status and error, then one row per node that ran, with its status, duration, and output (or error) as JSON. A flow that does not compile shows the backend's list of problems instead. If the backend is not reachable, the panel says to start `flowforge serve`.
-- Showing the run on the canvas itself and streaming events while the run happens are slice 9.
+
+**Live execution view** (set in slice 9):
+- Test runs are streamed ([api-v1.md](api-v1.md), "Streaming"): the results panel fills in row by row as nodes start and finish, instead of appearing at the end.
+- The canvas shows each node's state in the latest run: **running** (blue glow), **done** (green, ✓), **failed** (red, ✗); the trigger counts as done once it has emitted. Nodes the run did not reach are dimmed once the run has finished. The marks stay until the results panel is closed, another run starts, or another flow is opened.
+- Clicking a row in the results panel selects that node on the canvas, so its config is at hand while reading its output.
+- Pausing, stepping and breakpoints (a real step-debugger) are Phase 7.
 
 ### Phase 3 — Server + Storage
 

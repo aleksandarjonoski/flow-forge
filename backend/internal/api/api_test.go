@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -254,5 +255,126 @@ func TestRun_OnlyPOST(t *testing.T) {
 	NewHandler(engine.DefaultRegistry).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/flows/run", nil))
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("GET status = %d, want 405", rec.Code)
+	}
+}
+
+// sseEvent is one parsed Server-Sent Event.
+type sseEvent struct {
+	name string
+	data string
+}
+
+// parseSSE splits a complete event-stream body into events.
+func parseSSE(t *testing.T, body string) []sseEvent {
+	t.Helper()
+	var out []sseEvent
+	for _, block := range strings.Split(strings.TrimSpace(body), "\n\n") {
+		var ev sseEvent
+		for _, line := range strings.Split(block, "\n") {
+			if v, ok := strings.CutPrefix(line, "event: "); ok {
+				ev.name = v
+			} else if v, ok := strings.CutPrefix(line, "data: "); ok {
+				ev.data = v
+			} else {
+				t.Fatalf("unexpected SSE line %q", line)
+			}
+		}
+		out = append(out, ev)
+	}
+	return out
+}
+
+func TestRun_Stream(t *testing.T) {
+	body := runBody(t, map[string]any{
+		"flow":    helloFlow(t),
+		"payload": map[string]any{"body": map[string]any{"name": "ada"}},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/flows/run", strings.NewReader(body))
+	req.Header.Set("Accept", "text/event-stream")
+	rec := httptest.NewRecorder()
+	NewHandler(engine.DefaultRegistry).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("response = %d %q, want 200 text/event-stream", rec.Code, rec.Header().Get("Content-Type"))
+	}
+	events := parseSSE(t, rec.Body.String())
+	var kinds []engine.TraceKind
+	for _, ev := range events[:len(events)-1] {
+		if ev.name != "trace" {
+			t.Fatalf("event %q before the end, want trace", ev.name)
+		}
+		var te engine.TraceEvent
+		if err := json.Unmarshal([]byte(ev.data), &te); err != nil {
+			t.Fatal(err)
+		}
+		kinds = append(kinds, te.Kind)
+	}
+	if len(kinds) != 6 || kinds[0] != engine.TraceExecutionStarted || kinds[5] != engine.TraceExecutionCompleted {
+		t.Errorf("trace kinds = %v, want a full hello execution", kinds)
+	}
+	last := events[len(events)-1]
+	var res map[string]any
+	if err := json.Unmarshal([]byte(last.data), &res); err != nil {
+		t.Fatal(err)
+	}
+	if last.name != "result" || res["status"] != "completed" || res["executionId"] == "" {
+		t.Errorf("last event = %s %v, want result completed with an executionId", last.name, res)
+	}
+	if _, hasTrace := res["trace"]; hasTrace {
+		t.Error("result event carries the trace; it should only end the stream")
+	}
+}
+
+// TestRun_StreamIsLive checks that events are flushed as they happen: with
+// a slow node, the first event arrives long before the run ends.
+func TestRun_StreamIsLive(t *testing.T) {
+	const delay = 600 * time.Millisecond
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(delay)
+	}))
+	defer slow.Close()
+	srv := httptest.NewServer(NewHandler(engine.DefaultRegistry))
+	defer srv.Close()
+
+	flowJSON := `{"id": "f", "version": "1.0",
+	  "nodes": [
+	    {"id": "t", "type": "http_trigger", "config": {"path": "/x"}},
+	    {"id": "r", "type": "http_request", "config": {"url": "` + slow.URL + `"}}
+	  ],
+	  "edges": [{"id": "e", "source": "t", "target": "r"}]}`
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/flows/run", strings.NewReader(`{"flow": `+flowJSON+`}`))
+	req.Header.Set("Accept", "text/event-stream")
+	start := time.Now()
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	buf := make([]byte, 512)
+	n, err := resp.Body.Read(buf)
+	firstAt := time.Since(start)
+	if err != nil || !strings.HasPrefix(string(buf[:n]), "event: trace") {
+		t.Fatalf("first read = %q, %v; want a trace event", buf[:n], err)
+	}
+	if firstAt > delay/2 {
+		t.Errorf("first event arrived after %v; it waited for the slow node (%v)", firstAt, delay)
+	}
+	rest, _ := io.ReadAll(resp.Body)
+	if total := time.Since(start); total < delay {
+		t.Errorf("stream ended after %v, before the slow node finished", total)
+	}
+	if !strings.Contains(string(rest), `"status":"completed"`) {
+		t.Errorf("stream did not end with a completed result: %q", rest)
+	}
+}
+
+func TestRun_StreamEarlyErrorsAreJSON(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/api/flows/run", strings.NewReader(`{"flow": {"id": "f", "version": "2.0"}}`))
+	req.Header.Set("Accept", "text/event-stream")
+	rec := httptest.NewRecorder()
+	NewHandler(engine.DefaultRegistry).ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest || rec.Header().Get("Content-Type") != "application/json" {
+		t.Errorf("response = %d %q, want 400 application/json", rec.Code, rec.Header().Get("Content-Type"))
 	}
 }
