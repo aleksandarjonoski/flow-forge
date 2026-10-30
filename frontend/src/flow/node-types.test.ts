@@ -23,6 +23,22 @@ describe('catalog', () => {
     expect(isTrigger('unknown_plugin')).toBe(false)
   })
 
+  it('gives every trigger, and only triggers, a sample payload', () => {
+    for (const t of NODE_TYPES) {
+      expect(typeof t.samplePayload === 'function', t.type).toBe(
+        t.kind === 'trigger',
+      )
+    }
+    expect(nodeType('http_trigger')!.samplePayload!()).toEqual({
+      headers: { 'Content-Type': 'application/json' },
+      query: {},
+      body: {},
+    })
+    expect(nodeType('cron_trigger')!.samplePayload!().firedAt).toMatch(
+      /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/,
+    )
+  })
+
   it('only lists required keys that are properties', () => {
     for (const t of NODE_TYPES) {
       for (const key of t.config.required ?? []) {

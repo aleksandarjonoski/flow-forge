@@ -35,6 +35,11 @@ export interface NodeTypeSpec {
   kind: 'trigger' | 'action'
   description: string
   config: ConfigSchema
+  /**
+   * Triggers only: an example of what the trigger emits, used to pre-fill
+   * the payload of a test run (engine-v1.md §11).
+   */
+  samplePayload?: () => Record<string, unknown>
 }
 
 const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
@@ -63,6 +68,11 @@ export const NODE_TYPES: readonly NodeTypeSpec[] = [
       },
       required: ['path'],
     },
+    samplePayload: () => ({
+      headers: { 'Content-Type': 'application/json' },
+      query: {},
+      body: {},
+    }),
   },
   {
     type: 'cron_trigger',
@@ -81,6 +91,9 @@ export const NODE_TYPES: readonly NodeTypeSpec[] = [
       },
       required: ['expression'],
     },
+    samplePayload: () => ({
+      firedAt: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
+    }),
   },
   {
     type: 'http_request',

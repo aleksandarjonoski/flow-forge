@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net"
 	"net/http"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aleksandarjonoski/flow-forge/backend/internal/api"
 	"github.com/aleksandarjonoski/flow-forge/backend/internal/engine"
 )
 
@@ -24,6 +26,7 @@ func TestCLI_UsageErrors(t *testing.T) {
 		"no file":         {"run"},
 		"two files":       {"run", "a.json", "b.json"},
 		"unknown flag":    {"run", "-port", "1", helloFlow},
+		"serve with args": {"serve", helloFlow},
 	}
 	for name, args := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -130,5 +133,54 @@ func TestServe_HelloFlow(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("serve did not return after cancel")
+	}
+}
+
+func TestCLI_ServeBadAddress(t *testing.T) {
+	var stderr bytes.Buffer
+	if code := cli([]string{"serve", "-addr", "not-an-address"}, &stderr); code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+}
+
+// TestServeAPI runs the editor API behind a real listener: a test run of the
+// hello flow completes, and the server shuts down cleanly.
+func TestServeAPI(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- serveAPI(ctx, ln, api.NewHandler(engine.DefaultRegistry)) }()
+
+	flowJSON, err := os.ReadFile(helloFlow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{"flow": ` + string(flowJSON) + `, "payload": {"body": {"name": "ada"}}}`
+	resp, err := http.Post("http://"+ln.Addr().String()+"/api/flows/run", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+	var got struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK || got.Status != "completed" {
+		t.Errorf("response = %d %q, want 200 completed", resp.StatusCode, got.Status)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("serveAPI = %v, want nil", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("serveAPI did not return after cancel")
 	}
 }

@@ -11,6 +11,7 @@ import {
   setNodeName,
   withEdgeIds,
 } from '../flow/edit.ts'
+import { runFlow } from '../api/client.ts'
 import {
   FlowParseError,
   defaultFileName,
@@ -18,12 +19,16 @@ import {
   serializeFlow,
   stampSaved,
 } from '../flow/file.ts'
-import type { Flow, Position } from '../flow/types.ts'
+import { isTrigger, type Flow, type Position } from '../flow/types.ts'
 import { DROP_OFFSET, type FfCanvas, type NodeDrop } from './ff-canvas.ts'
 import './ff-canvas.ts'
 import './ff-node-panel.ts'
 import type { NodeChange } from './ff-node-panel.ts'
 import './ff-palette.ts'
+import type { FfRunDialog, RunRequest } from './ff-run-dialog.ts'
+import './ff-run-dialog.ts'
+import type { RunState } from './ff-run-panel.ts'
+import './ff-run-panel.ts'
 
 // The editor opens with the hello example; New starts an empty flow.
 const initialFileName = 'hello.flow.json'
@@ -35,10 +40,11 @@ const STACK_STEP = 30
 
 /**
  * Root shell of the FlowForge editor: a header (flow name, New / Open /
- * Save), the node palette, the graph canvas, and the property panel of the
- * selected node. Owns the Flow being edited, the selection, and the file it
- * came from. See "Opening and saving files" and "Palette, new flow and
- * deleting" in docs/design.md.
+ * Save / Run), the node palette, the graph canvas with test-run results below
+ * it, and the property panel of the selected node. Owns the Flow being
+ * edited, the selection, the file it came from, and the last test run. See
+ * "Opening and saving files", "Palette, new flow and deleting" and "Test
+ * runs" in docs/design.md.
  */
 @customElement('ff-app')
 export class FfApp extends LitElement {
@@ -121,9 +127,21 @@ export class FfApp extends LitElement {
       border-right: 1px solid color-mix(in srgb, currentColor 20%, transparent);
     }
 
-    ff-canvas {
+    .center {
       flex: 1;
       min-width: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    ff-canvas {
+      flex: 1;
+      min-height: 0;
+    }
+
+    ff-run-panel {
+      max-height: 40%;
+      border-top: 1px solid color-mix(in srgb, currentColor 20%, transparent);
     }
 
     ff-node-panel {
@@ -158,11 +176,22 @@ export class FfApp extends LitElement {
   @state()
   private message?: string
 
+  /** The latest test run and the flow it ran, shown below the canvas. */
+  @state()
+  private run?: { state: RunState; flow: Flow }
+
+  // Increments per test run, so a slow earlier run cannot overwrite the
+  // result of a later one.
+  private runSeq = 0
+
   @query('input[type=file]')
   private fileInput!: HTMLInputElement
 
   @query('ff-canvas')
   private canvas!: FfCanvas
+
+  @query('ff-run-dialog')
+  private runDialog!: FfRunDialog
 
   private get dirty(): boolean {
     return this.flow !== this.savedFlow
@@ -187,6 +216,7 @@ export class FfApp extends LitElement {
 
   render() {
     const node = this.flow.nodes.find((n) => n.id === this.selected)
+    const triggers = this.flow.nodes.filter((n) => isTrigger(n.type))
     return html`
       <header>
         <h1>FlowForge</h1>
@@ -229,6 +259,22 @@ export class FfApp extends LitElement {
         >
           Save
         </button>
+        <button
+          @click=${() => this.runDialog.show()}
+          ?disabled=${triggers.length === 0}
+          title=${
+            triggers.length
+              ? 'Run the flow once with a test payload'
+              : 'Add a trigger first'
+          }
+        >
+          Run…
+        </button>
+        <ff-run-dialog
+          .triggers=${triggers}
+          @run-request=${(e: CustomEvent<RunRequest>) =>
+            void this.startRun(e.detail)}
+        ></ff-run-dialog>
         <input
           type="file"
           accept=".json,application/json"
@@ -250,16 +296,27 @@ export class FfApp extends LitElement {
         <ff-palette
           @node-add=${(e: CustomEvent<string>) => this.addAtCenter(e.detail)}
         ></ff-palette>
-        <ff-canvas
-          .flow=${this.flow}
-          .docKey=${this.docKey}
-          .selected=${node?.id}
-          @flow-change=${(e: CustomEvent<Flow>) => (this.flow = e.detail)}
-          @node-select=${(e: CustomEvent<string | null>) =>
-            (this.selected = e.detail ?? undefined)}
-          @node-drop=${(e: CustomEvent<NodeDrop>) =>
-            this.addNodeAt(e.detail.type, e.detail.position)}
-        ></ff-canvas>
+        <div class="center">
+          <ff-canvas
+            .flow=${this.flow}
+            .docKey=${this.docKey}
+            .selected=${node?.id}
+            @flow-change=${(e: CustomEvent<Flow>) => (this.flow = e.detail)}
+            @node-select=${(e: CustomEvent<string | null>) =>
+              (this.selected = e.detail ?? undefined)}
+            @node-drop=${(e: CustomEvent<NodeDrop>) =>
+              this.addNodeAt(e.detail.type, e.detail.position)}
+          ></ff-canvas>
+          ${
+            this.run
+              ? html`<ff-run-panel
+                  .run=${this.run.state}
+                  .flow=${this.run.flow}
+                  @close=${() => (this.run = undefined)}
+                ></ff-run-panel>`
+              : nothing
+          }
+        </div>
         ${
           node
             ? html`<ff-node-panel
@@ -306,6 +363,16 @@ export class FfApp extends LitElement {
     if (this.selected === id) this.selected = undefined
   }
 
+  // startRun sends the current flow for a test run and shows the outcome.
+  private async startRun({ trigger, payload }: RunRequest) {
+    const seq = ++this.runSeq
+    const flow = this.flow
+    this.run = { state: { phase: 'running' }, flow }
+    const outcome = await runFlow(flow, trigger, payload)
+    if (seq !== this.runSeq) return
+    this.run = { state: { phase: 'done', outcome }, flow }
+  }
+
   // load replaces the document: new flow, nothing selected, canvas refit.
   private load(flow: Flow, fileName: string | undefined) {
     this.flow = flow
@@ -313,6 +380,8 @@ export class FfApp extends LitElement {
     this.fileName = fileName
     this.selected = undefined
     this.message = undefined
+    this.run = undefined
+    this.runSeq++
     this.docKey++
   }
 

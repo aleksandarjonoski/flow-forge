@@ -175,7 +175,7 @@ Five layers, top to bottom:
 ### Layer 2 — Server (Phase 3+)
 
 - **Tech**: Go `net/http` + a thin router. No heavy framework.
-- **Owns**: REST endpoints for flow CRUD, start/stop, execution log, trace streaming (websocket).
+- **Owns**: REST endpoints for flow CRUD, start/stop, execution log, trace streaming (websocket). Contract: [api-v1.md](api-v1.md) (Phase 2 has only test runs).
 - **Persists**: flows + execution history in SQLite.
 - **Hosts**: the engine. In single-process deployment, server and engine live in one binary.
 
@@ -297,8 +297,8 @@ Frontend lives in `frontend/` next to `backend/`. Same repo (monorepo decision d
 | 5 | Property panel (per-node config form) | Generic form driven by a JSON-Schema subset per node type; schemas live in the frontend until the backend serves them | ✅ done |
 | 6 | Save/load to local file (download/upload JSON) | No backend required yet; canonical JSON so saved files diff cleanly | ✅ done |
 | 7 | Node palette (drag a new node onto the canvas) | Types from the frontend catalog; also New flow, deleting nodes, editable flow name | ✅ done |
-| 8 | "Run" button → POST to backend `/flows/run` | Backend stays Phase-1 simple — accepts JSON in, runs once | next |
-| 9 | Live execution view (trace events streamed via SSE/WS) | First glimpse of the step-debugger | |
+| 8 | "Run" button → POST to backend `/flows/run` | Test run: fire one trigger once with a chosen payload, return the trace — see [api-v1.md](api-v1.md); `flowforge serve` hosts the API | ✅ done |
+| 9 | Live execution view (trace events streamed via SSE/WS) | First glimpse of the step-debugger | next |
 
 **Phase 2 done when:** a user can build the same `hello` flow visually, hit Run, and see the trace stream in real time.
 
@@ -355,6 +355,12 @@ Frontend lives in `frontend/` next to `backend/`. Same repo (monorepo decision d
 - The flow's name is edited directly in the header. Its ID is fixed.
 - **Save is disabled while the flow has no nodes**, because the engine (and Open) reject a flow without nodes. An empty canvas shows a hint to drag a node in.
 - **Canvas sync:** the canvas tracks a document key that the app changes on Open and New. A new key means a new document: the canvas rebuilds and zooms to fit. Any other change from outside (adding, deleting, renaming) is applied in place — nodes and edges are added or removed individually — so pan and zoom are kept.
+
+**Test runs** (set in slice 8):
+- **Run…** in the header opens a dialog to pick the trigger (when the flow has more than one) and edit the payload it emits, as JSON. The payload starts from a sample for the trigger type, taken from the catalog: `{headers, query, body}` for `http_trigger`, `{firedAt}` for `cron_trigger`. Run is disabled while the flow has no trigger.
+- The editor sends the **current** flow, saved or not, to `POST /api/flows/run` ([api-v1.md](api-v1.md)). The backend executes that trigger's path once and returns the trace; nothing is left running.
+- The result opens in a panel below the canvas: overall status and error, then one row per node that ran, with its status, duration, and output (or error) as JSON. A flow that does not compile shows the backend's list of problems instead. If the backend is not reachable, the panel says to start `flowforge serve`.
+- Showing the run on the canvas itself and streaming events while the run happens are slice 9.
 
 ### Phase 3 — Server + Storage
 
