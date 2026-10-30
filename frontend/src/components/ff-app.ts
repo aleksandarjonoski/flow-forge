@@ -1,9 +1,9 @@
 import { LitElement, css, html } from 'lit'
 import { customElement } from 'lit/decorators.js'
+import './ff-canvas.ts'
 
 /**
- * Root shell of the FlowForge editor. For now it only lays out the header and
- * an empty canvas area; the graph canvas arrives in Phase 2 slice 2.
+ * Root shell of the FlowForge editor: a header above the graph canvas.
  */
 @customElement('ff-app')
 export class FfApp extends LitElement {
@@ -24,18 +24,15 @@ export class FfApp extends LitElement {
       font-size: 1.125rem;
     }
 
-    main {
+    ff-canvas {
       flex: 1;
-      display: grid;
-      place-items: center;
-      opacity: 0.6;
     }
   `
 
   render() {
     return html`
       <header><h1>FlowForge</h1></header>
-      <main>Canvas coming soon.</main>
+      <ff-canvas></ff-canvas>
     `
   }
 }

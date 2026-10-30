@@ -167,7 +167,7 @@ Five layers, top to bottom:
 
 ### Layer 1 — Visual Builder (Phase 2+)
 
-- **Tech**: LitElement components, TypeScript, Vite for dev/build, an embeddable graph library (likely React Flow embedded as a web component, or Drawflow as a lighter alternative).
+- **Tech**: LitElement components, TypeScript, Vite for dev/build, [Rete.js](https://retejs.org) v2 as the graph library, rendered through its official Lit plugin ([ADR 0001](adr/0001-graph-library.md)).
 - **Owns**: canvas, drag-and-drop, edge routing, property panel, JSON serialization.
 - **Knows nothing about Go.** Communicates with the backend only via the Flow JSON schema + a small REST API.
 - **Output**: a Flow JSON document.
@@ -291,7 +291,7 @@ Frontend lives in `frontend/` next to `backend/`. Same repo (monorepo decision d
 | # | Slice | Notes |
 |---|---|---|
 | 1 | `frontend/` scaffold | Vite + LitElement + TS + ESLint + Prettier |
-| 2 | Embed a graph library | React Flow or Drawflow — decide after a small spike |
+| 2 | Embed a graph library | Rete.js v2 + its Lit renderer, chosen after a spike — see [ADR 0001](adr/0001-graph-library.md). `<ff-canvas>` with pan/zoom, drag and connect; no flow loaded yet |
 | 3 | Render a hardcoded Flow JSON on the canvas | Read-only, proves the JSON → visual mapping |
 | 4 | Make nodes draggable + edges connectable | Editing state lives in the frontend |
 | 5 | Property panel (per-node config form) | Generic JSON-schema-driven form, one per node type |
