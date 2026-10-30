@@ -21,7 +21,7 @@ import {
   nextEdgeId,
   removeEdge,
 } from '../flow/edit.ts'
-import { FlowLoadError, flowToGraph } from '../flow/to-graph.ts'
+import { FlowLoadError, flowToGraph, sameStructure } from '../flow/to-graph.ts'
 import type { Flow } from '../flow/types.ts'
 
 /** Node and connection types used by the editor. */
@@ -53,6 +53,8 @@ const NOTICE_MS = 3000
  * did not produce itself. See "Editing on the canvas" in docs/design.md.
  *
  * @fires flow-change - detail is the edited Flow
+ * @fires node-select - detail is the picked node's ID, or null when empty
+ *   canvas is clicked
  *
  * The Rete area is created on first render and destroyed on disconnect, so
  * the element is not meant to be moved around the DOM.
@@ -101,11 +103,19 @@ export class FfCanvas extends LitElement {
   @property({ attribute: false })
   flow?: Flow
 
+  /**
+   * The selected node's ID, highlighted on the canvas. The canvas reports
+   * picks with node-select; the owner decides what is selected.
+   */
+  @property({ attribute: false })
+  selected?: string
+
   /** The Rete editor holding the graph. */
   readonly editor = new NodeEditor<Schemes>()
 
   private area?: AreaPlugin<Schemes, AreaExtra>
   private connection?: ConnectionPlugin<Schemes, AreaExtra>
+  private selection?: ReturnType<typeof AreaExtensions.selectableNodes>
 
   /** Why the current flow could not be drawn, if it could not. */
   @state()
@@ -168,9 +178,11 @@ export class FfCanvas extends LitElement {
     area.use(connection)
     area.use(render)
 
-    AreaExtensions.selectableNodes(area, AreaExtensions.selector(), {
-      accumulating: AreaExtensions.accumulateOnCtrl(),
-    })
+    this.selection = AreaExtensions.selectableNodes(
+      area,
+      AreaExtensions.selector(),
+      { accumulating: AreaExtensions.accumulateOnCtrl() },
+    )
     AreaExtensions.simpleNodesOrder(area)
     this.area = area
     this.connection = connection
@@ -182,8 +194,18 @@ export class FfCanvas extends LitElement {
   updated(changed: PropertyValues<this>) {
     if (changed.has('flow') && this.flow !== this.drawn) {
       const flow = this.flow
+      const before = this.drawn
       this.drawn = flow
-      this.loading = this.loading.then(() => this.draw(flow))
+      // Same nodes and edges (e.g. a rename): patch in place so pan and
+      // zoom are kept. Anything else: redraw.
+      const step =
+        before && flow && sameStructure(before, flow)
+          ? () => this.patch(flow)
+          : () => this.draw(flow)
+      this.loading = this.loading.then(step)
+    }
+    if (changed.has('selected')) {
+      this.loading = this.loading.then(() => this.highlight(this.selected))
     }
   }
 
@@ -203,6 +225,14 @@ export class FfCanvas extends LitElement {
       return ctx
     })
     area.addPipe((ctx) => {
+      if (ctx.type === 'nodepicked') {
+        this.emitSelect(ctx.data.id)
+      } else if (
+        ctx.type === 'pointerdown' &&
+        ctx.data.event.target === area.container
+      ) {
+        this.emitSelect(null)
+      }
       if (ctx.type === 'nodedragged' && !this.drawing && this.flow) {
         const view = area.nodeViews.get(ctx.data.id)
         const node = this.flow.nodes.find((n) => n.id === ctx.data.id)
@@ -248,6 +278,48 @@ export class FfCanvas extends LitElement {
     )
   }
 
+  private emitSelect(id: string | null) {
+    this.dispatchEvent(
+      new CustomEvent('node-select', {
+        detail: id,
+        bubbles: true,
+        composed: true,
+      }),
+    )
+  }
+
+  // highlight makes Rete's selection match `selected`.
+  private async highlight(id: string | undefined) {
+    const selection = this.selection
+    if (!selection) return
+    for (const node of this.editor.getNodes()) {
+      if (node.id === id) {
+        if (!node.selected) await selection.select(node.id, false)
+      } else if (node.selected) {
+        await selection.unselect(node.id)
+      }
+    }
+  }
+
+  // patch updates labels and positions of a flow whose structure matches
+  // what is drawn.
+  private async patch(flow: Flow | undefined) {
+    const area = this.area
+    if (!area || !flow || this.problems) return
+    for (const n of flowToGraph(flow).nodes) {
+      const node = this.editor.getNode(n.id)
+      if (!node) continue
+      if (node.label !== n.label) {
+        node.label = n.label
+        await area.update('node', n.id)
+      }
+      const at = area.nodeViews.get(n.id)?.position
+      if (at && (at.x !== n.position.x || at.y !== n.position.y)) {
+        await area.translate(n.id, n.position)
+      }
+    }
+  }
+
   private showNotice(message: string) {
     clearTimeout(this.noticeTimer)
     this.notice = message
@@ -261,6 +333,7 @@ export class FfCanvas extends LitElement {
     } finally {
       this.drawing = false
     }
+    await this.highlight(this.selected)
   }
 
   private async rebuild(flow: Flow | undefined) {
@@ -308,6 +381,7 @@ export class FfCanvas extends LitElement {
     this.area?.destroy()
     this.area = undefined
     this.connection = undefined
+    this.selection = undefined
   }
 }
 
@@ -317,5 +391,6 @@ declare global {
   }
   interface HTMLElementEventMap {
     'flow-change': CustomEvent<Flow>
+    'node-select': CustomEvent<string | null>
   }
 }

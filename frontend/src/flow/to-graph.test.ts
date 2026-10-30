@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import hello from '../../../backend/examples/hello.flow.json'
-import { FlowLoadError, flowToGraph } from './to-graph.ts'
+import { FlowLoadError, flowToGraph, sameStructure } from './to-graph.ts'
 import type { Edge, Flow, FlowNode } from './types.ts'
 
 function node(id: string, type: string, name = ''): FlowNode {
@@ -121,5 +121,41 @@ describe('flowToGraph', () => {
       ),
     )
     expect(problems).toEqual(['edge "e1": unknown source node "missing"'])
+  })
+})
+
+describe('sameStructure', () => {
+  const base = flow(
+    [node('a', 'log', 'A'), node('b', 'log', 'B')],
+    [edge('e1', 'a', 'b')],
+  )
+
+  it('ignores names, positions, config and order', () => {
+    const other: Flow = {
+      ...base,
+      nodes: [
+        { ...base.nodes[1], name: 'Renamed', config: { level: 'warn' } },
+        { ...base.nodes[0], position: { x: 9, y: 9 } },
+      ],
+    }
+    expect(sameStructure(base, other)).toBe(true)
+  })
+
+  it('notices node and edge changes', () => {
+    expect(
+      sameStructure(base, {
+        ...base,
+        nodes: [...base.nodes, node('c', 'log')],
+      }),
+    ).toBe(false)
+    expect(
+      sameStructure(base, {
+        ...base,
+        nodes: [node('a', 'transform'), base.nodes[1]],
+      }),
+    ).toBe(false)
+    expect(
+      sameStructure(base, { ...base, edges: [edge('e1', 'b', 'a')] }),
+    ).toBe(false)
   })
 })

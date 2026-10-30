@@ -294,8 +294,8 @@ Frontend lives in `frontend/` next to `backend/`. Same repo (monorepo decision d
 | 2 | Embed a graph library | Rete.js v2 + its Lit renderer, chosen after a spike — see [ADR 0001](adr/0001-graph-library.md). `<ff-canvas>` with pan/zoom, drag and connect; no flow loaded yet | ✅ done |
 | 3 | Render a Flow JSON on the canvas | Display-only, proves the JSON → visual mapping | ✅ done |
 | 4 | Make nodes draggable + edges connectable | Edits update the Flow held in the frontend; cycles refused | ✅ done |
-| 5 | Property panel (per-node config form) | Generic JSON-schema-driven form, one per node type | next |
-| 6 | Save/load to local file (download/upload JSON) | No backend required yet | |
+| 5 | Property panel (per-node config form) | Generic form driven by a JSON-Schema subset per node type; schemas live in the frontend until the backend serves them | ✅ done |
+| 6 | Save/load to local file (download/upload JSON) | No backend required yet | next |
 | 7 | Node palette (drag a new node onto the canvas) | Pull node types from a hardcoded list | |
 | 8 | "Run" button → POST to backend `/flows/run` | Backend stays Phase-1 simple — accepts JSON in, runs once | |
 | 9 | Live execution view (trace events streamed via SSE/WS) | First glimpse of the step-debugger | |
@@ -325,6 +325,18 @@ Frontend lives in `frontend/` next to `backend/`. Same repo (monorepo decision d
   - **Disconnect** — dragging an edge's end off its input removes the edge.
 - A connection that would create a cycle, including a node connected to itself, is refused before anything changes. The canvas shows a short notice, matching the engine's DAG rule (engine-v1.md §6).
 - Adding and deleting nodes are later slices (palette, slice 7).
+
+**Node type catalog and property panel** (set in slice 5):
+- `src/flow/node-types.ts` describes each built-in node type: label, kind (trigger or action), a one-line description, and a **config schema**. The schema is a small subset of JSON Schema, so the backend can later serve the same documents from its node registry (`GET /node-types`, Phase 3) and the frontend copy goes away. Until then, the catalog must be kept in step with engine-v1.md §11 by hand.
+- Supported schema subset: an `object` whose `properties` are either
+  - `string` — with optional `title`, `description`, `default`, `enum`, `pattern`, `format: "uri"`, and `x-multiline: true` (renders a text area, used for expressions and templates), or
+  - `object` with `additionalProperties: { "type": "string" }` — a key/value list, used for HTTP headers.
+  - `required` lists the keys that must be set.
+- Selecting a node on the canvas opens `<ff-node-panel>` beside it. Clicking empty canvas closes it. The panel edits the node's `name` and its `config`; the node's `id` and `type` are shown read-only.
+- **Unset vs. empty:** clearing a field removes its key from `config`, so the engine applies its default. Defaults are shown as placeholders and "Default (…)" choices, never written into the file.
+- Problems are shown next to the field as you type: required but missing, value not in `enum`, `pattern` mismatch, malformed URL. The value is still stored, because the user is mid-edit; the engine validates the full config again when the flow runs. Expression syntax is not checked in the browser.
+- A node type with no catalog entry (e.g. a third-party plugin) gets a raw JSON editor for its `config`, applied when the JSON parses as an object.
+- The canvas patches labels in place when only node names change, and redraws only when the set of nodes or edges changes. So typing in the panel does not reset pan or zoom.
 
 ### Phase 3 — Server + Storage
 

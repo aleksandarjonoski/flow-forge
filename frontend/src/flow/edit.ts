@@ -12,6 +12,41 @@ export function moveNode(flow: Flow, nodeId: string, to: Position): Flow {
   }
 }
 
+/** Sets a node's display name. Unknown IDs are a no-op. */
+export function setNodeName(flow: Flow, nodeId: string, name: string): Flow {
+  return {
+    ...flow,
+    nodes: flow.nodes.map((n) => (n.id === nodeId ? { ...n, name } : n)),
+  }
+}
+
+/** Replaces a node's config. Unknown IDs are a no-op. */
+export function setNodeConfig(
+  flow: Flow,
+  nodeId: string,
+  config: Record<string, unknown>,
+): Flow {
+  return {
+    ...flow,
+    nodes: flow.nodes.map((n) => (n.id === nodeId ? { ...n, config } : n)),
+  }
+}
+
+/**
+ * Returns config with key set to value, or with key removed when value is
+ * undefined (so the engine applies its default).
+ */
+export function withConfigValue(
+  config: Record<string, unknown>,
+  key: string,
+  value: unknown,
+): Record<string, unknown> {
+  const next = { ...config }
+  if (value === undefined) delete next[key]
+  else next[key] = value
+  return next
+}
+
 /** Appends an edge. Use nextEdgeId for a fresh ID. */
 export function addEdge(flow: Flow, edge: Edge): Flow {
   return { ...flow, edges: [...flow.edges, edge] }

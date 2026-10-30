@@ -1,3 +1,5 @@
+import { nodeType } from './node-types.ts'
+
 // The Flow JSON document, mirroring backend/internal/flow/flow.go. The JSON
 // field names are the contract shared with the engine.
 
@@ -37,12 +39,7 @@ export interface Metadata {
   author?: string
 }
 
-/** Node types that start executions. They have no input. */
-export const TRIGGER_TYPES: ReadonlySet<string> = new Set([
-  'http_trigger',
-  'cron_trigger',
-])
-
+/** Reports whether a node type starts executions (and so has no input). */
 export function isTrigger(type: string): boolean {
-  return TRIGGER_TYPES.has(type)
+  return nodeType(type)?.kind === 'trigger'
 }

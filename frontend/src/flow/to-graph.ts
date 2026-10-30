@@ -81,3 +81,22 @@ export function flowToGraph(flow: Flow): Graph {
   if (problems.length > 0) throw new FlowLoadError(problems)
   return { nodes, connections }
 }
+
+/**
+ * Reports whether two flows have the same nodes (by ID and type) and the same
+ * edges, i.e. differ at most in names, positions and config. The canvas uses
+ * it to patch instead of redrawing.
+ */
+export function sameStructure(a: Flow, b: Flow): boolean {
+  const nodes = (f: Flow) =>
+    f.nodes
+      .map((n) => `${n.id}\u0000${n.type}`)
+      .sort()
+      .join('\n')
+  const edges = (f: Flow) =>
+    f.edges
+      .map((e) => `${e.id}\u0000${e.source}\u0000${e.target}`)
+      .sort()
+      .join('\n')
+  return nodes(a) === nodes(b) && edges(a) === edges(b)
+}

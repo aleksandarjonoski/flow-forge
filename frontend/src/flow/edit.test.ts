@@ -5,6 +5,9 @@ import {
   moveNode,
   nextEdgeId,
   removeEdge,
+  setNodeConfig,
+  setNodeName,
+  withConfigValue,
 } from './edit.ts'
 import type { Edge, Flow } from './types.ts'
 
@@ -97,5 +100,34 @@ describe('createsCycle', () => {
   it('allows forward and unrelated edges', () => {
     expect(createsCycle(chain, 'a', 'c')).toBe(false)
     expect(createsCycle(flow(), 'c', 'a')).toBe(false)
+  })
+})
+
+describe('setNodeName / setNodeConfig', () => {
+  it('changes only the given node', () => {
+    const before = flow()
+    const renamed = setNodeName(before, 'b', 'Bee')
+    expect(renamed.nodes.map((n) => n.name)).toEqual(['a', 'Bee', 'c'])
+    const configured = setNodeConfig(before, 'c', { level: 'warn' })
+    expect(configured.nodes.map((n) => n.config)).toEqual([
+      {},
+      {},
+      { level: 'warn' },
+    ])
+    expect(before.nodes[1].name).toBe('b')
+    expect(before.nodes[2].config).toEqual({})
+  })
+})
+
+describe('withConfigValue', () => {
+  it('sets a key, or removes it for undefined', () => {
+    const config = { a: '1', b: '2' }
+    expect(withConfigValue(config, 'c', '3')).toEqual({
+      a: '1',
+      b: '2',
+      c: '3',
+    })
+    expect(withConfigValue(config, 'a', undefined)).toEqual({ b: '2' })
+    expect(config).toEqual({ a: '1', b: '2' })
   })
 })
