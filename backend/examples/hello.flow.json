@@ -7,7 +7,10 @@
       "id": "node-1",
       "type": "http_trigger",
       "name": "HTTP Trigger",
-      "position": { "x": 100, "y": 200 },
+      "position": {
+        "x": 100,
+        "y": 200
+      },
       "config": {
         "path": "/webhook",
         "method": "POST"
@@ -17,7 +20,10 @@
       "id": "node-2",
       "type": "transform",
       "name": "Transform Data",
-      "position": { "x": 400, "y": 200 },
+      "position": {
+        "x": 400,
+        "y": 200
+      },
       "config": {
         "expression": "{ greeting: 'hello ' + input.body.name }"
       }
@@ -26,7 +32,10 @@
       "id": "node-3",
       "type": "log",
       "name": "Log Output",
-      "position": { "x": 700, "y": 200 },
+      "position": {
+        "x": 700,
+        "y": 200
+      },
       "config": {
         "level": "info"
       }

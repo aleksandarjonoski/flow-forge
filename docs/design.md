@@ -295,8 +295,8 @@ Frontend lives in `frontend/` next to `backend/`. Same repo (monorepo decision d
 | 3 | Render a Flow JSON on the canvas | Display-only, proves the JSON → visual mapping | ✅ done |
 | 4 | Make nodes draggable + edges connectable | Edits update the Flow held in the frontend; cycles refused | ✅ done |
 | 5 | Property panel (per-node config form) | Generic form driven by a JSON-Schema subset per node type; schemas live in the frontend until the backend serves them | ✅ done |
-| 6 | Save/load to local file (download/upload JSON) | No backend required yet | next |
-| 7 | Node palette (drag a new node onto the canvas) | Pull node types from a hardcoded list | |
+| 6 | Save/load to local file (download/upload JSON) | No backend required yet; canonical JSON so saved files diff cleanly | ✅ done |
+| 7 | Node palette (drag a new node onto the canvas) | Pull node types from a hardcoded list | next |
 | 8 | "Run" button → POST to backend `/flows/run` | Backend stays Phase-1 simple — accepts JSON in, runs once | |
 | 9 | Live execution view (trace events streamed via SSE/WS) | First glimpse of the step-debugger | |
 
@@ -337,6 +337,15 @@ Frontend lives in `frontend/` next to `backend/`. Same repo (monorepo decision d
 - Problems are shown next to the field as you type: required but missing, value not in `enum`, `pattern` mismatch, malformed URL. The value is still stored, because the user is mid-edit; the engine validates the full config again when the flow runs. Expression syntax is not checked in the browser.
 - A node type with no catalog entry (e.g. a third-party plugin) gets a raw JSON editor for its `config`, applied when the JSON parses as an object.
 - The canvas patches labels in place when only node names change, and redraws only when the set of nodes or edges changes. So typing in the panel does not reset pan or zoom.
+
+**Opening and saving files** (set in slice 6):
+- The header shows the flow's name, a dot when there are unsaved changes, and **Open…** / **Save** buttons (also Ctrl/⌘+O and Ctrl/⌘+S). Open reads a local `.json` file. Save downloads the flow as `<file name>` — the opened file's name, or `<flow id>.flow.json` for a flow that did not come from a file. Writing back to the same file on disk (File System Access API) is not in scope.
+- `src/flow/file.ts` holds `parseFlow` and `serializeFlow`:
+  - **`parseFlow` accepts exactly what the engine's parser accepts** (`backend/internal/flow/parser.go`): unknown fields are rejected, `id` is required, `version` must be `1.0`, there is at least one node, node IDs are present and unique, every edge has a source and target, and non-empty edge IDs are unique. Missing optional fields get the same zero values Go would use. Graph rules (dangling edges, cycles, …) are not checked here; a file that breaks them still opens, and the canvas lists the problems (slice 3).
+  - **`serializeFlow` writes the canonical form** (§7.2): keys in schema order (`id, name, version, nodes, edges, metadata`; `id, type, name, position, config` per node; `id, source, target` per edge), 2-space indent, trailing newline. Optional empty fields (`sourceHandle`, `targetHandle`, metadata fields) are omitted, as Go's `omitempty` does. Config keys keep their order. `examples/hello.flow.json` is stored in this form, and a test checks that it round-trips byte for byte.
+  - Saving a flow with unsaved changes sets `metadata.updatedAt` to the current time (UTC, whole seconds), and `createdAt` too if it is missing. Saving an unchanged flow leaves both alone.
+- A file that fails to parse is reported in a message bar and the current flow stays open. Opening a file while there are unsaved changes asks for confirmation, and so does leaving the page.
+- The editor still starts with the hello example. "New flow" arrives with the palette (slice 7), since an empty flow cannot be edited without it.
 
 ### Phase 3 — Server + Storage
 
