@@ -349,8 +349,13 @@ Nodes that need data from elsewhere in the graph read `ctx.NodeResults[someNodeI
 Each lives in `backend/internal/nodes/<name>.go` and registers itself via `init()`.
 
 ### `http_trigger`
-- Config: `path` (string, required), `method` (string, default `POST`).
-- Lifecycle: registers a handler with the engine's shared HTTP server on `Start`. Each request becomes an `emit({"headers": ..., "body": ..., "query": ...})`.
+- Config: `path` (string, required, must start with `/`), `method` (string, default `POST`, case-insensitive).
+- `Init` requires `services.HTTP`; a missing mux is a load-time error.
+- Lifecycle: registers a handler with the engine's shared `HTTPMux` on `Start` and removes it on `Stop`. Each request becomes an `emit({"headers": ..., "body": ..., "query": ...})`:
+  - `headers` — `map[string]any`, canonical header name → values joined with `", "`.
+  - `query` — `map[string]any`, parameter → first value.
+  - `body` — parsed JSON if `Content-Type` is `application/json` (or `+json`), otherwise the raw body as a string; `nil` if empty.
+- Responses: `202 Accepted` once `emit` returns without error. The flow's output is **not** returned to the caller — request/response flows are v2. Invalid JSON → `400`, body over 1 MiB → `413`, `emit` error → `500`.
 - The HTTP server is owned by the engine, not the node — see §12.
 
 ### `cron_trigger`
@@ -405,6 +410,8 @@ type Node interface {
 ```
 
 (Yes, this is a refinement of §3.2. I'm leaving §3.2 minimal so the *concept* is clear, and adding the services parameter here where the rationale is.)
+
+`HTTPMux` is a plain `http.Handler` keyed by exact method + path. Unlike `http.ServeMux` it supports removing routes, which `Stop` needs. A request to an unknown path gets `404`; a known path with the wrong method gets `405` with an `Allow` header. Registering the same method + path twice is an error. The mux does not listen itself: whoever runs the engine (the CLI, slice 10) mounts it in an `http.Server` on the configured address.
 
 ---
 

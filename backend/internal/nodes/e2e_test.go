@@ -3,6 +3,8 @@ package nodes
 import (
 	"bytes"
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"reflect"
 	"strings"
@@ -12,26 +14,17 @@ import (
 	"github.com/aleksandarjonoski/flow-forge/backend/internal/flow"
 )
 
-// fakeTrigger stands in for http_trigger until slice 7. It never fires on its
-// own; tests drive executions directly through the Executor.
-type fakeTrigger struct{}
-
-func (fakeTrigger) Type() string                                      { return "http_trigger" }
-func (fakeTrigger) Init(map[string]any, *engine.EngineServices) error { return nil }
-func (fakeTrigger) Start(context.Context, engine.Emitter) error       { return nil }
-func (fakeTrigger) Stop() error                                       { return nil }
-
 func TestBuiltinsRegistered(t *testing.T) {
-	for _, typ := range []string{TransformType, LogType} {
+	for _, typ := range []string{HTTPTriggerType, TransformType, LogType} {
 		if !engine.DefaultRegistry.Has(typ) {
 			t.Errorf("DefaultRegistry is missing %q", typ)
 		}
 	}
 }
 
-// compileHello compiles examples/hello.flow.json with the real transform and
-// log nodes and a fake http_trigger.
-func compileHello(t *testing.T) *engine.CompiledFlow {
+// compileHello compiles examples/hello.flow.json against an isolated registry
+// holding the real built-in nodes.
+func compileHello(t *testing.T) (*engine.CompiledFlow, *engine.EngineServices) {
 	t.Helper()
 	f, err := os.Open("../../examples/hello.flow.json")
 	if err != nil {
@@ -44,19 +37,20 @@ func compileHello(t *testing.T) *engine.CompiledFlow {
 	}
 
 	reg := engine.NewRegistry()
-	reg.Register("http_trigger", func() engine.Node { return fakeTrigger{} })
+	reg.Register(HTTPTriggerType, func() engine.Node { return &HTTPTrigger{} })
 	reg.Register(TransformType, func() engine.Node { return &Transform{} })
 	reg.Register(LogType, func() engine.Node { return &Log{} })
 
-	cf, err := engine.Compile(fl, reg, &engine.EngineServices{})
+	svc := engine.NewEngineServices()
+	cf, err := engine.Compile(fl, reg, svc)
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
-	return cf
+	return cf, svc
 }
 
 func TestHelloFlow_EndToEnd(t *testing.T) {
-	cf := compileHello(t)
+	cf, _ := compileHello(t)
 	var buf bytes.Buffer
 	cf.Nodes["node-3"].(*Log).logger = newLog(t, nil, &buf).logger
 
@@ -97,7 +91,7 @@ func TestHelloFlow_EndToEnd(t *testing.T) {
 }
 
 func TestHelloFlow_TransformFailureHalts(t *testing.T) {
-	cf := compileHello(t)
+	cf, _ := compileHello(t)
 	var buf bytes.Buffer
 	cf.Nodes["node-3"].(*Log).logger = newLog(t, nil, &buf).logger
 
@@ -111,5 +105,38 @@ func TestHelloFlow_TransformFailureHalts(t *testing.T) {
 	}
 	if buf.Len() != 0 {
 		t.Errorf("log node ran after failure: %q", buf.String())
+	}
+}
+
+// TestHelloFlow_OverHTTP drives the whole flow through a real HTTP request:
+// http_trigger → transform → log.
+func TestHelloFlow_OverHTTP(t *testing.T) {
+	cf, svc := compileHello(t)
+	var buf bytes.Buffer
+	cf.Nodes["node-3"].(*Log).logger = newLog(t, nil, &buf).logger
+
+	exec := engine.NewExecutor(cf, nil)
+	trigger := cf.Nodes["node-1"].(*HTTPTrigger)
+	emit := func(p engine.Payload) error {
+		return exec.Execute(context.Background(), "node-1", p)
+	}
+	if err := trigger.Start(context.Background(), emit); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer trigger.Stop()
+
+	srv := httptest.NewServer(svc.HTTP)
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/webhook", "application/json", strings.NewReader(`{"name":"ada"}`))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Errorf("status = %d, want 202", resp.StatusCode)
+	}
+	if !strings.Contains(buf.String(), `"greeting":"hello ada"`) {
+		t.Errorf("log record = %q, want it to contain the greeting", buf.String())
 	}
 }

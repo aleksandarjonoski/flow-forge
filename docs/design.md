@@ -261,25 +261,25 @@ Long-term, a Flow is a *specification* that can be either *interpreted* (FlowFor
 
 The complete plan. Each entry is a meaningful milestone, not a single PR.
 
-### Phase 0 — Foundation ✅ (current)
+### Phase 0 — Foundation ✅
 - [x] Repo skeleton + license
 - [x] [engine-v1.md](engine-v1.md) design contract
 - [x] [design.md](design.md) (this document)
 - [x] Slice 1: `flow` package — schema structs + JSON parser + 12 unit tests
 
-### Phase 1 — Engine MVP
+### Phase 1 — Engine MVP (current)
 The 10 engine slices defined in [engine-v1.md §15](engine-v1.md#L294). Recapped here:
 
 | # | Slice | Status |
 |---|---|---|
 | 1 | `flow` package (structs + parser + tests) | ✅ done |
-| 2 | `engine/topo.go` (cycle detection, topo sort, reachability) | next |
-| 3 | `engine/registry.go` + `engine/trace.go` | |
-| 4 | `engine/compile.go` + `flow/validator.go` | |
-| 5 | `engine/executor.go` (per-execution runner) | |
-| 6 | `nodes/log.go` + `nodes/transform.go` | |
-| 7 | `engine/services.go` + `nodes/http_trigger.go` | |
-| 8 | `nodes/http_request.go` | |
+| 2 | `engine/topo.go` (cycle detection, topo sort, reachability) | ✅ done |
+| 3 | `engine/registry.go` + `engine/trace.go` | ✅ done |
+| 4 | `engine/validate.go` + `engine/compile.go` | ✅ done |
+| 5 | `engine/executor.go` (per-execution runner) | ✅ done |
+| 6 | `nodes/log.go` + `nodes/transform.go` | ✅ done |
+| 7 | `engine/services.go` + `nodes/http_trigger.go` | ✅ done |
+| 8 | `nodes/http_request.go` | next |
 | 9 | `nodes/cron_trigger.go` | |
 | 10 | `cmd/flowforge/main.go` (CLI) | |
 
