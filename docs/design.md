@@ -308,6 +308,15 @@ Frontend lives in `frontend/` next to `backend/`. Same repo (monorepo decision d
 - npm scripts: `dev` (Vite dev server), `build` (type-check + bundle to `dist/`), `typecheck`, `lint` (ESLint with type info + Lit/web-component rules), `format` / `format:check` (Prettier).
 - TypeScript is pinned to 6.0 because typescript-eslint does not support TypeScript 7 yet. Revisit when it does.
 - The frontend talks to the backend only through the Flow JSON schema and the REST API (Layer 1, §5). Once the API exists (slice 8), the Vite dev server proxies `/api` to the Go backend.
+- Unit tests use Vitest (`npm test`), next to the code as `*.test.ts`.
+
+**Flow JSON → canvas mapping** (set in slice 3):
+- `src/flow/types.ts` mirrors the backend document model (`backend/internal/flow/flow.go`) field for field. JSON field names are the contract.
+- Each Flow node becomes one canvas node with the **same ID**, labelled with its `name` (or its `type` when `name` is empty), placed at its `position`.
+- Sockets: a trigger type (`http_trigger`, `cron_trigger`) gets one output and no input. Every other type, including unknown ones, gets one input and one output. Edges connect a source's output to a target's input. `sourceHandle` / `targetHandle` are ignored, as in the engine.
+- An edge whose source or target is not a node, whose target is a trigger, or that gives a node a second inbound edge is a load error. The canvas shows the error instead of a partial graph. The same rules are enforced by the engine (engine-v1.md §4.2, §10).
+- After loading, the view zooms to fit all nodes.
+- Until slice 4 the canvas is display-only: dragging and connecting still work on screen, but nothing is written back to the Flow.
 
 ### Phase 3 — Server + Storage
 

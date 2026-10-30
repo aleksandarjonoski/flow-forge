@@ -1,6 +1,11 @@
 import { LitElement, css, html } from 'lit'
 import { customElement } from 'lit/decorators.js'
+import hello from '../../../backend/examples/hello.flow.json'
+import type { Flow } from '../flow/types.ts'
 import './ff-canvas.ts'
+
+// Shown until flows can be opened (Phase 2 slice 6).
+const initialFlow: Flow = hello
 
 /**
  * Root shell of the FlowForge editor: a header above the graph canvas.
@@ -32,7 +37,7 @@ export class FfApp extends LitElement {
   render() {
     return html`
       <header><h1>FlowForge</h1></header>
-      <ff-canvas></ff-canvas>
+      <ff-canvas .flow=${initialFlow}></ff-canvas>
     `
   }
 }
