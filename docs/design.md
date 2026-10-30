@@ -302,6 +302,13 @@ Frontend lives in `frontend/` next to `backend/`. Same repo (monorepo decision d
 
 **Phase 2 done when:** a user can build the same `hello` flow visually, hit Run, and see the trace stream in real time.
 
+**Frontend conventions** (set in slice 1):
+- Lives in `frontend/`. Node 22 (pinned in `frontend/.nvmrc`), npm, with `package-lock.json` committed.
+- UI pieces are Lit custom elements prefixed `ff-` (e.g. `<ff-app>`), one per file in `src/components/`. `src/main.ts` is the single entry point and imports them.
+- npm scripts: `dev` (Vite dev server), `build` (type-check + bundle to `dist/`), `typecheck`, `lint` (ESLint with type info + Lit/web-component rules), `format` / `format:check` (Prettier).
+- TypeScript is pinned to 6.0 because typescript-eslint does not support TypeScript 7 yet. Revisit when it does.
+- The frontend talks to the backend only through the Flow JSON schema and the REST API (Layer 1, §5). Once the API exists (slice 8), the Vite dev server proxies `/api` to the Go backend.
+
 ### Phase 3 — Server + Storage
 
 | # | Slice | Notes |
