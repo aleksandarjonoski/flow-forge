@@ -74,7 +74,7 @@ Stated explicitly so we don't drift:
 
 What FlowForge *can do* at each milestone. Each phase is a meaningful product step, not just an engineering subtask.
 
-### Phase 1 — Engine MVP (current)
+### Phase 1 — Engine MVP ✅
 - Load a Flow JSON file from disk.
 - Validate it (cycles, unknown node types, dangling edges).
 - Run it indefinitely. Triggers fire, executions run, results are logged.
@@ -82,7 +82,7 @@ What FlowForge *can do* at each milestone. Each phase is a meaningful product st
 - CLI: `flowforge run flow.json`.
 - Trace events emitted to stdout as JSON lines.
 
-### Phase 2 — Visual Editor MVP
+### Phase 2 — Visual Editor MVP (current)
 - Browser-based canvas: drag nodes, connect edges, edit properties.
 - Save flow JSON to disk via backend API.
 - Load existing flow JSON for editing.
@@ -267,7 +267,7 @@ The complete plan. Each entry is a meaningful milestone, not a single PR.
 - [x] [design.md](design.md) (this document)
 - [x] Slice 1: `flow` package — schema structs + JSON parser + 12 unit tests
 
-### Phase 1 — Engine MVP (current)
+### Phase 1 — Engine MVP ✅
 The 10 engine slices defined in [engine-v1.md §15](engine-v1.md#L294). Recapped here:
 
 | # | Slice | Description | Status |
@@ -281,11 +281,11 @@ The 10 engine slices defined in [engine-v1.md §15](engine-v1.md#L294). Recapped
 | 7 | `engine/services.go` + `nodes/http_trigger.go` | Shared `HTTPMux` (method + path routes, removable) in `EngineServices`; `http_trigger` turns each request into an execution and answers `202`. | ✅ done |
 | 8 | `nodes/http_request.go` | Outbound HTTP action: config `url`, `method`, `headers`, `bodyFrom`; output `{status, headers, body}` with JSON bodies parsed; respects context cancellation. | ✅ done |
 | 9 | `nodes/cron_trigger.go` | Scheduled trigger on a shared `robfig/cron` scheduler in `EngineServices`; config `expression`, each tick emits `{firedAt}`. | ✅ done |
-| 10 | `cmd/flowforge/main.go` (CLI) | `flowforge run <file>`: parse + compile the flow, implement `engine.Run` (start triggers, wire emit → executor, stop on shutdown), serve `HTTPMux` on a configurable address, trace to stdout. | next |
+| 10 | `cmd/flowforge/main.go` (CLI) | `flowforge run <file>`: parse + compile the flow, implement `engine.Run` (start triggers, wire emit → executor, stop on shutdown), serve `HTTPMux` on a configurable address, trace to stdout. | ✅ done |
 
 **Phase 1 done when:** `flowforge run examples/hello.flow.json` starts a server, accepts a POST to `/webhook`, runs a transform, and logs the result. No UI.
 
-### Phase 2 — Visual Editor MVP
+### Phase 2 — Visual Editor MVP (current)
 Frontend lives in `frontend/` next to `backend/`. Same repo (monorepo decision documented separately).
 
 | # | Slice | Notes |

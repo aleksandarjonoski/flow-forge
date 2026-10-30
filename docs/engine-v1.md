@@ -200,10 +200,14 @@ type CompiledFlow struct {
 `Init(config)` is called here, **once per node**, so config errors surface at load time, not at execution time.
 
 ### 4.4 Run
-`engine.Run(cf *CompiledFlow) error`:
-1. For each trigger, instantiate an `Emitter` bound to that trigger's downstream subgraph.
-2. Call `trigger.Start(ctx, emit)`.
-3. Block until `ctx` is cancelled, then call `Stop()` on each trigger.
+`engine.Run(ctx context.Context, cf *CompiledFlow, svc *EngineServices, sink TraceSink) error`:
+1. Build one `Executor` for `cf` that traces to `sink`.
+2. For each trigger, build an `Emitter` bound to that trigger's subgraph. Each `emit` call starts one execution in its own goroutine (§9) and returns immediately; execution errors are reported through the trace, not to the trigger. Once shutdown begins, `emit` returns `ErrEngineStopped`.
+3. Call `trigger.Start(ctx, emit)` for each trigger. If one fails, the triggers already started are stopped and `Run` returns the error.
+4. Start `svc.Cron`.
+5. Block until `ctx` is cancelled. Then: stop the scheduler (waiting for running cron jobs), call `Stop()` on each trigger, and wait for in-flight executions — the cancelled context makes them abort between nodes. Returns the joined `Stop()` errors.
+
+`svc` must be the same services passed to `Compile`. `Run` does not listen on a port: the caller mounts `svc.HTTP` in an `http.Server` (§4.6).
 
 ### 4.5 Execute (per event)
 When a trigger calls `emit(payload)`:
@@ -213,6 +217,13 @@ When a trigger calls `emit(payload)`:
 4. Store each result in `ctx.NodeResults[nodeID]`.
 5. On error, halt the execution (§7).
 6. Emit trace events at every step (§8).
+
+### 4.6 CLI
+`flowforge run [-addr :8080] <flow.json>`:
+- Parses and compiles the flow against `DefaultRegistry` (all built-in nodes), serves `svc.HTTP` on `-addr`, and calls `engine.Run`.
+- Trace events go to **stdout** as JSON lines (`StdoutTraceSink`). `slog` output — including the `log` node — goes to **stderr** as text, with all levels enabled.
+- `SIGINT` / `SIGTERM` shut down gracefully: the HTTP server stops accepting requests (5 s grace), then the engine stops.
+- Exit codes: `0` clean shutdown, `1` load/compile/runtime error, `2` usage error.
 
 ---
 
