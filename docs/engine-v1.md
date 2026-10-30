@@ -363,8 +363,11 @@ Each lives in `backend/internal/nodes/<name>.go` and registers itself via `init(
 - Lifecycle: uses `github.com/robfig/cron/v3`. Each tick → `emit({"firedAt": <RFC3339>})`.
 
 ### `http_request`
-- Config: `url`, `method`, `headers` (map), `bodyFrom` (string, optional — JSON path into input).
-- Output: `{"status": int, "headers": map, "body": any}`. Body is parsed as JSON if `Content-Type` is JSON, else as string.
+- Config: `url` (string, required, absolute `http`/`https` URL), `method` (string, default `GET`, case-insensitive), `headers` (map of string → string, optional), `bodyFrom` (string, optional).
+- `bodyFrom` is a dot-separated path into the input payload (e.g. `body` or `body.user`). The value found there is JSON-encoded as the request body, and `Content-Type: application/json` is set unless `headers` sets it. A path that does not resolve fails the node. Without `bodyFrom` the request has no body.
+- The request uses `ctx.GoCtx`, so engine shutdown cancels in-flight calls. A 30 s client timeout is a safety net until per-node timeouts exist (§14).
+- Output: `{"status": int, "headers": map, "body": any}`. `headers` uses the same flattening as `http_trigger`. Body is parsed as JSON if `Content-Type` is JSON, else returned as a string; `nil` if empty. Response bodies over 10 MiB fail the node.
+- A non-2xx status is **not** an error: the status is data in the output. Transport failures (DNS, connection refused, timeout, invalid JSON response) fail the node (§7).
 
 ### `transform`
 - Config: `expression` (string, required) — an expression in [expr-lang/expr](https://github.com/expr-lang/expr) syntax.

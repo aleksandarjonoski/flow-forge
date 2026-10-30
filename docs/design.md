@@ -270,18 +270,18 @@ The complete plan. Each entry is a meaningful milestone, not a single PR.
 ### Phase 1 — Engine MVP (current)
 The 10 engine slices defined in [engine-v1.md §15](engine-v1.md#L294). Recapped here:
 
-| # | Slice | Status |
-|---|---|---|
-| 1 | `flow` package (structs + parser + tests) | ✅ done |
-| 2 | `engine/topo.go` (cycle detection, topo sort, reachability) | ✅ done |
-| 3 | `engine/registry.go` + `engine/trace.go` | ✅ done |
-| 4 | `engine/validate.go` + `engine/compile.go` | ✅ done |
-| 5 | `engine/executor.go` (per-execution runner) | ✅ done |
-| 6 | `nodes/log.go` + `nodes/transform.go` | ✅ done |
-| 7 | `engine/services.go` + `nodes/http_trigger.go` | ✅ done |
-| 8 | `nodes/http_request.go` | next |
-| 9 | `nodes/cron_trigger.go` | |
-| 10 | `cmd/flowforge/main.go` (CLI) | |
+| # | Slice | Description | Status |
+|---|---|---|---|
+| 1 | `flow` package (structs + parser + tests) | Go structs mirroring the v1 Flow JSON schema; `flow.Parse` decodes a document and rejects duplicate node IDs. | ✅ done |
+| 2 | `engine/topo.go` (cycle detection, topo sort, reachability) | Graph algorithms: DFS cycle detection that returns the cycle path, Kahn topological sort, BFS reachability from a trigger. | ✅ done |
+| 3 | `engine/registry.go` + `engine/trace.go` | `Node`/`ActionNode`/`TriggerNode` interfaces, node-type registry with `DefaultRegistry`, trace events plus stdout/memory/multi sinks. | ✅ done |
+| 4 | `engine/validate.go` + `engine/compile.go` | Validate a flow (known types, valid edges, single inbound edge, DAG) and compile it: instantiate + `Init` nodes, build adjacency and per-trigger topo order. | ✅ done |
+| 5 | `engine/executor.go` (per-execution runner) | Run one execution of a trigger's subgraph in topo order; halt on first error, recover panics, honor cancellation, trace every step. | ✅ done |
+| 6 | `nodes/log.go` + `nodes/transform.go` | `transform` evaluates an expr-lang expression over `input`/`nodes`/`env`; `log` writes via slog with a template message and passes input through. | ✅ done |
+| 7 | `engine/services.go` + `nodes/http_trigger.go` | Shared `HTTPMux` (method + path routes, removable) in `EngineServices`; `http_trigger` turns each request into an execution and answers `202`. | ✅ done |
+| 8 | `nodes/http_request.go` | Outbound HTTP action: config `url`, `method`, `headers`, `bodyFrom`; output `{status, headers, body}` with JSON bodies parsed; respects context cancellation. | ✅ done |
+| 9 | `nodes/cron_trigger.go` | Scheduled trigger on a shared `robfig/cron` scheduler in `EngineServices`; config `expression`, each tick emits `{firedAt}`. | next |
+| 10 | `cmd/flowforge/main.go` (CLI) | `flowforge run <file>`: parse + compile the flow, implement `engine.Run` (start triggers, wire emit → executor, stop on shutdown), serve `HTTPMux` on a configurable address, trace to stdout. | |
 
 **Phase 1 done when:** `flowforge run examples/hello.flow.json` starts a server, accepts a POST to `/webhook`, runs a transform, and logs the result. No UI.
 

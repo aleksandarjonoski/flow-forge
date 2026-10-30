@@ -15,7 +15,7 @@ import (
 )
 
 func TestBuiltinsRegistered(t *testing.T) {
-	for _, typ := range []string{HTTPTriggerType, TransformType, LogType} {
+	for _, typ := range []string{HTTPTriggerType, HTTPRequestType, TransformType, LogType} {
 		if !engine.DefaultRegistry.Has(typ) {
 			t.Errorf("DefaultRegistry is missing %q", typ)
 		}

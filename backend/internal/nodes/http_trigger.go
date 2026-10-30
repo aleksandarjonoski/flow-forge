@@ -80,16 +80,12 @@ func (t *HTTPTrigger) serve(w http.ResponseWriter, r *http.Request, emit engine.
 		return
 	}
 
-	headers := make(map[string]any, len(r.Header))
-	for k, v := range r.Header {
-		headers[k] = strings.Join(v, ", ")
-	}
 	query := make(map[string]any)
 	for k, v := range r.URL.Query() {
 		query[k] = v[0]
 	}
 
-	if err := emit(engine.Payload{"headers": headers, "query": query, "body": body}); err != nil {
+	if err := emit(engine.Payload{"headers": flattenHeaders(r.Header), "query": query, "body": body}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -119,6 +115,16 @@ func readBody(w http.ResponseWriter, r *http.Request) (any, int, error) {
 		return nil, http.StatusBadRequest, fmt.Errorf("invalid JSON body: %w", err)
 	}
 	return body, 0, nil
+}
+
+// flattenHeaders maps each canonical header name to its values joined with
+// ", ", which is how HTTP itself combines repeated fields.
+func flattenHeaders(h http.Header) map[string]any {
+	out := make(map[string]any, len(h))
+	for k, v := range h {
+		out[k] = strings.Join(v, ", ")
+	}
+	return out
 }
 
 // isJSON reports whether a Content-Type is application/json or a +json type.
