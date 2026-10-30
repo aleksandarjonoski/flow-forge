@@ -21,8 +21,12 @@ func serve(m *HTTPMux, method, path string) *httptest.ResponseRecorder {
 }
 
 func TestNewEngineServices(t *testing.T) {
-	if NewEngineServices().HTTP == nil {
+	svc := NewEngineServices()
+	if svc.HTTP == nil {
 		t.Error("HTTP mux is nil")
+	}
+	if svc.Cron == nil {
+		t.Error("cron scheduler is nil")
 	}
 }
 

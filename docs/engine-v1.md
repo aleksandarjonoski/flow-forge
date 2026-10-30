@@ -359,8 +359,10 @@ Each lives in `backend/internal/nodes/<name>.go` and registers itself via `init(
 - The HTTP server is owned by the engine, not the node — see §12.
 
 ### `cron_trigger`
-- Config: `expression` (cron string, required).
-- Lifecycle: uses `github.com/robfig/cron/v3`. Each tick → `emit({"firedAt": <RFC3339>})`.
+- Config: `expression` (cron string, required). Standard 5-field syntax (`minute hour dom month dow`) plus descriptors (`@hourly`, `@daily`, `@every 30s`, …). An optional `CRON_TZ=Europe/Amsterdam ` prefix sets the time zone; otherwise the process's local zone applies.
+- The expression is parsed at `Init`, so an invalid schedule fails at load time. `Init` requires `services.Cron`.
+- Lifecycle: uses `github.com/robfig/cron/v3`. `Start` adds a job to the engine's shared scheduler, `Stop` removes it. Each tick → `emit({"firedAt": <RFC3339, UTC>})`.
+- Ticks run in the scheduler's own goroutines, so a slow execution never delays the next tick. An `emit` error has no caller to report to, so it is logged via `slog`.
 
 ### `http_request`
 - Config: `url` (string, required, absolute `http`/`https` URL), `method` (string, default `GET`, case-insensitive), `headers` (map of string → string, optional), `bodyFrom` (string, optional).
@@ -415,6 +417,8 @@ type Node interface {
 (Yes, this is a refinement of §3.2. I'm leaving §3.2 minimal so the *concept* is clear, and adding the services parameter here where the rationale is.)
 
 `HTTPMux` is a plain `http.Handler` keyed by exact method + path. Unlike `http.ServeMux` it supports removing routes, which `Stop` needs. A request to an unknown path gets `404`; a known path with the wrong method gets `405` with an `Allow` header. Registering the same method + path twice is an error. The mux does not listen itself: whoever runs the engine (the CLI, slice 10) mounts it in an `http.Server` on the configured address.
+
+The cron scheduler works the same way: nodes only add and remove jobs, and whoever runs the engine calls `Cron.Start()` / `Cron.Stop()`.
 
 ---
 

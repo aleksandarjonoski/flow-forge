@@ -6,20 +6,25 @@ import (
 	"slices"
 	"strings"
 	"sync"
+
+	"github.com/robfig/cron/v3"
 )
 
 // EngineServices holds shared infrastructure that some nodes need at runtime:
 // the HTTP mux (for http_trigger), the cron scheduler (for cron_trigger),
 // etc. See docs/engine-v1.md §12.
 //
-// The cron scheduler is added in slice 9.
+// Nodes only register on these services; whoever runs the engine serves the
+// HTTP mux and starts/stops the cron scheduler.
 type EngineServices struct {
 	HTTP *HTTPMux
+	Cron *cron.Cron
 }
 
-// NewEngineServices returns services with every field initialized.
+// NewEngineServices returns services with every field initialized. The cron
+// scheduler is created stopped.
 func NewEngineServices() *EngineServices {
-	return &EngineServices{HTTP: NewHTTPMux()}
+	return &EngineServices{HTTP: NewHTTPMux(), Cron: cron.New()}
 }
 
 // HTTPMux is the HTTP handler shared by every http_trigger in a flow. Routes
