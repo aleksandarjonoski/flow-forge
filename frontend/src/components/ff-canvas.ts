@@ -21,8 +21,8 @@ import {
   nextEdgeId,
   removeEdge,
 } from '../flow/edit.ts'
-import { FlowLoadError, flowToGraph, sameStructure } from '../flow/to-graph.ts'
-import type { Flow } from '../flow/types.ts'
+import { FlowLoadError, flowToGraph, type Graph } from '../flow/to-graph.ts'
+import type { Flow, Position } from '../flow/types.ts'
 
 /** Node and connection types used by the editor. */
 export type Schemes = GetSchemes<
@@ -39,22 +39,38 @@ const OUT = 'out'
 // How long a notice such as "would create a cycle" stays visible.
 const NOTICE_MS = 3000
 
+/** Drag-and-drop data type carrying a node type name from the palette. */
+export const NODE_TYPE_MIME = 'application/x-flowforge-node-type'
+
+// A dropped node is placed so the pointer lands near its title, not its
+// top-left corner. Matches the classic preset's node width (180px).
+export const DROP_OFFSET = { x: 90, y: 20 }
+
+/** Detail of a node-drop event. */
+export interface NodeDrop {
+  type: string
+  position: Position
+}
+
 /**
  * The graph canvas, built on Rete.js (see docs/adr/0001-graph-library.md).
  * Supports pan, zoom, dragging nodes, selecting nodes and drawing
  * connections.
  *
- * Setting `flow` draws that flow and zooms to fit it. A flow that breaks the
- * mapping rules is not drawn; the canvas lists its problems instead.
+ * A new `docKey` means a new document: the canvas rebuilds from `flow` and
+ * zooms to fit. Any other new `flow` is synced in place (nodes and edges
+ * added or removed individually), keeping pan and zoom. A flow that breaks
+ * the mapping rules is not drawn; the canvas lists its problems instead.
  *
  * Edits made on the canvas (moving nodes, connecting, disconnecting) never
  * mutate `flow`: each produces a new Flow, stored in `flow` and announced
- * with a `flow-change` event. The canvas redraws only when given a Flow it
- * did not produce itself. See "Editing on the canvas" in docs/design.md.
+ * with a `flow-change` event. See "Editing on the canvas" and "Palette, new
+ * flow and deleting" in docs/design.md.
  *
  * @fires flow-change - detail is the edited Flow
  * @fires node-select - detail is the picked node's ID, or null when empty
  *   canvas is clicked
+ * @fires node-drop - detail is a NodeDrop: a palette item was dropped here
  *
  * The Rete area is created on first render and destroyed on disconnect, so
  * the element is not meant to be moved around the DOM.
@@ -87,6 +103,15 @@ export class FfCanvas extends LitElement {
       padding-left: 1.25rem;
     }
 
+    .empty {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      opacity: 0.6;
+      pointer-events: none;
+    }
+
     .notice {
       position: absolute;
       bottom: 1rem;
@@ -102,6 +127,10 @@ export class FfCanvas extends LitElement {
   /** The flow to display. */
   @property({ attribute: false })
   flow?: Flow
+
+  /** Identifies the document; changing it rebuilds the canvas and zooms to fit. */
+  @property({ attribute: false })
+  docKey?: unknown
 
   /**
    * The selected node's ID, highlighted on the canvas. The canvas reports
@@ -132,12 +161,15 @@ export class FfCanvas extends LitElement {
   private loading: Promise<void> = Promise.resolve()
 
   // The Flow the editor currently shows. A `flow` that is this same object
-  // came from the canvas's own edit and needs no redraw.
+  // came from the canvas's own edit and needs no sync.
   private drawn?: Flow
 
-  // True while draw() rebuilds the editor, so its add/remove events are not
+  // True while sync() changes the editor, so its add/remove events are not
   // mistaken for user edits.
   private drawing = false
+
+  // Shared by every socket; all sockets are compatible.
+  private readonly socket = new ClassicPreset.Socket('flow')
 
   render() {
     return html`
@@ -149,6 +181,13 @@ export class FfCanvas extends LitElement {
               <ul>
                 ${this.problems.map((p) => html`<li>${p}</li>`)}
               </ul>
+            </div>`
+          : nothing
+      }
+      ${
+        !this.problems && this.flow?.nodes.length === 0
+          ? html`<div class="empty">
+              Drag a node from the palette to start.
             </div>`
           : nothing
       }
@@ -187,22 +226,55 @@ export class FfCanvas extends LitElement {
     this.area = area
     this.connection = connection
     this.trackEdits(area)
+    this.addEventListener('dragover', this.onDragOver)
+    this.addEventListener('drop', this.onDrop)
+  }
+
+  /** The point in flow coordinates at the middle of the visible canvas. */
+  viewCenter(): Position {
+    const rect = this.getBoundingClientRect()
+    return this.toFlowPoint(
+      rect.left + rect.width / 2,
+      rect.top + rect.height / 2,
+    )
+  }
+
+  // toFlowPoint converts a viewport point to flow coordinates, undoing the
+  // area's pan and zoom.
+  private toFlowPoint(clientX: number, clientY: number): Position {
+    const rect = this.getBoundingClientRect()
+    const { x, y, k } = this.area?.area.transform ?? { x: 0, y: 0, k: 1 }
+    return { x: (clientX - rect.left - x) / k, y: (clientY - rect.top - y) / k }
+  }
+
+  private onDragOver = (e: DragEvent) => {
+    if (!e.dataTransfer?.types.includes(NODE_TYPE_MIME)) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'copy'
+  }
+
+  private onDrop = (e: DragEvent) => {
+    const type = e.dataTransfer?.getData(NODE_TYPE_MIME)
+    if (!type) return
+    e.preventDefault()
+    const at = this.toFlowPoint(e.clientX, e.clientY)
+    const detail: NodeDrop = {
+      type,
+      position: { x: at.x - DROP_OFFSET.x, y: at.y - DROP_OFFSET.y },
+    }
+    this.dispatchEvent(
+      new CustomEvent('node-drop', { detail, bubbles: true, composed: true }),
+    )
   }
 
   // firstUpdated runs before updated in the same cycle, so the area exists
   // by the time the first flow is drawn.
   updated(changed: PropertyValues<this>) {
-    if (changed.has('flow') && this.flow !== this.drawn) {
+    const newDoc = changed.has('docKey')
+    if (newDoc || (changed.has('flow') && this.flow !== this.drawn)) {
       const flow = this.flow
-      const before = this.drawn
       this.drawn = flow
-      // Same nodes and edges (e.g. a rename): patch in place so pan and
-      // zoom are kept. Anything else: redraw.
-      const step =
-        before && flow && sameStructure(before, flow)
-          ? () => this.patch(flow)
-          : () => this.draw(flow)
-      this.loading = this.loading.then(step)
+      this.loading = this.loading.then(() => this.sync(flow, newDoc))
     }
     if (changed.has('selected')) {
       this.loading = this.loading.then(() => this.highlight(this.selected))
@@ -301,15 +373,66 @@ export class FfCanvas extends LitElement {
     }
   }
 
-  // patch updates labels and positions of a flow whose structure matches
-  // what is drawn.
-  private async patch(flow: Flow | undefined) {
+  private showNotice(message: string) {
+    clearTimeout(this.noticeTimer)
+    this.notice = message
+    this.noticeTimer = setTimeout(() => (this.notice = undefined), NOTICE_MS)
+  }
+
+  // sync makes the editor show `flow`. With `fresh` (a new document) it
+  // starts from an empty editor and zooms to fit afterwards; otherwise it
+  // removes and adds only what differs, keeping pan and zoom.
+  private async sync(flow: Flow | undefined, fresh: boolean) {
     const area = this.area
-    if (!area || !flow || this.problems) return
-    for (const n of flowToGraph(flow).nodes) {
-      const node = this.editor.getNode(n.id)
-      if (!node) continue
-      if (node.label !== n.label) {
+    if (!area) return
+    this.drawing = true
+    try {
+      let graph: Graph | undefined
+      try {
+        graph = flow && flowToGraph(flow)
+      } catch (e) {
+        this.problems = e instanceof FlowLoadError ? e.problems : [String(e)]
+        await this.editor.clear()
+        return
+      }
+      // Coming back from an undrawable flow, the editor is empty anyway.
+      if (fresh || this.problems) await this.editor.clear()
+      this.problems = undefined
+      if (!graph) return
+      await this.apply(area, graph)
+      if (fresh) await AreaExtensions.zoomAt(area, this.editor.getNodes())
+    } finally {
+      this.drawing = false
+    }
+    await this.highlight(this.selected)
+  }
+
+  // apply brings the editor's nodes and connections in line with graph.
+  private async apply(area: AreaPlugin<Schemes, AreaExtra>, graph: Graph) {
+    const wantNodes = new Map(graph.nodes.map((n) => [n.id, n]))
+    const wantConns = new Map(graph.connections.map((c) => [c.id, c]))
+
+    for (const c of this.editor.getConnections()) {
+      const want = wantConns.get(c.id)
+      if (!want || want.source !== c.source || want.target !== c.target) {
+        await this.editor.removeConnection(c.id)
+      }
+    }
+    for (const node of this.editor.getNodes()) {
+      if (!wantNodes.has(node.id)) await this.editor.removeNode(node.id)
+    }
+
+    for (const n of graph.nodes) {
+      let node = this.editor.getNode(n.id)
+      if (!node) {
+        node = new ClassicPreset.Node(n.label)
+        node.id = n.id
+        if (n.hasInput) node.addInput(IN, new ClassicPreset.Input(this.socket))
+        if (n.hasOutput) {
+          node.addOutput(OUT, new ClassicPreset.Output(this.socket))
+        }
+        await this.editor.addNode(node)
+      } else if (node.label !== n.label) {
         node.label = n.label
         await area.update('node', n.id)
       }
@@ -318,66 +441,26 @@ export class FfCanvas extends LitElement {
         await area.translate(n.id, n.position)
       }
     }
-  }
 
-  private showNotice(message: string) {
-    clearTimeout(this.noticeTimer)
-    this.notice = message
-    this.noticeTimer = setTimeout(() => (this.notice = undefined), NOTICE_MS)
-  }
-
-  private async draw(flow: Flow | undefined) {
-    this.drawing = true
-    try {
-      await this.rebuild(flow)
-    } finally {
-      this.drawing = false
-    }
-    await this.highlight(this.selected)
-  }
-
-  private async rebuild(flow: Flow | undefined) {
-    const area = this.area
-    if (!area) return
-    await this.editor.clear()
-    this.problems = undefined
-    if (!flow) return
-
-    let graph
-    try {
-      graph = flowToGraph(flow)
-    } catch (e) {
-      this.problems = e instanceof FlowLoadError ? e.problems : [String(e)]
-      return
-    }
-
-    const socket = new ClassicPreset.Socket('flow')
-    const nodes = new Map<string, ClassicPreset.Node>()
-    for (const n of graph.nodes) {
-      const node = new ClassicPreset.Node(n.label)
-      node.id = n.id
-      if (n.hasInput) node.addInput(IN, new ClassicPreset.Input(socket))
-      if (n.hasOutput) node.addOutput(OUT, new ClassicPreset.Output(socket))
-      await this.editor.addNode(node)
-      await area.translate(node.id, n.position)
-      nodes.set(n.id, node)
-    }
     for (const c of graph.connections) {
+      if (this.editor.getConnection(c.id)) continue
+      // flowToGraph guarantees both ends exist, and they were added above.
       const connection = new ClassicPreset.Connection(
-        nodes.get(c.source)!,
+        this.editor.getNode(c.source)!,
         OUT,
-        nodes.get(c.target)!,
+        this.editor.getNode(c.target)!,
         IN,
       )
       connection.id = c.id
       await this.editor.addConnection(connection)
     }
-    await AreaExtensions.zoomAt(area, this.editor.getNodes())
   }
 
   disconnectedCallback() {
     super.disconnectedCallback()
     clearTimeout(this.noticeTimer)
+    this.removeEventListener('dragover', this.onDragOver)
+    this.removeEventListener('drop', this.onDrop)
     this.area?.destroy()
     this.area = undefined
     this.connection = undefined
@@ -392,5 +475,6 @@ declare global {
   interface HTMLElementEventMap {
     'flow-change': CustomEvent<Flow>
     'node-select': CustomEvent<string | null>
+    'node-drop': CustomEvent<NodeDrop>
   }
 }

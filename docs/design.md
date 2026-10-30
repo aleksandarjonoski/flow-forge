@@ -296,8 +296,8 @@ Frontend lives in `frontend/` next to `backend/`. Same repo (monorepo decision d
 | 4 | Make nodes draggable + edges connectable | Edits update the Flow held in the frontend; cycles refused | ✅ done |
 | 5 | Property panel (per-node config form) | Generic form driven by a JSON-Schema subset per node type; schemas live in the frontend until the backend serves them | ✅ done |
 | 6 | Save/load to local file (download/upload JSON) | No backend required yet; canonical JSON so saved files diff cleanly | ✅ done |
-| 7 | Node palette (drag a new node onto the canvas) | Pull node types from a hardcoded list | next |
-| 8 | "Run" button → POST to backend `/flows/run` | Backend stays Phase-1 simple — accepts JSON in, runs once | |
+| 7 | Node palette (drag a new node onto the canvas) | Types from the frontend catalog; also New flow, deleting nodes, editable flow name | ✅ done |
+| 8 | "Run" button → POST to backend `/flows/run` | Backend stays Phase-1 simple — accepts JSON in, runs once | next |
 | 9 | Live execution view (trace events streamed via SSE/WS) | First glimpse of the step-debugger | |
 
 **Phase 2 done when:** a user can build the same `hello` flow visually, hit Run, and see the trace stream in real time.
@@ -336,7 +336,7 @@ Frontend lives in `frontend/` next to `backend/`. Same repo (monorepo decision d
 - **Unset vs. empty:** clearing a field removes its key from `config`, so the engine applies its default. Defaults are shown as placeholders and "Default (…)" choices, never written into the file.
 - Problems are shown next to the field as you type: required but missing, value not in `enum`, `pattern` mismatch, malformed URL. The value is still stored, because the user is mid-edit; the engine validates the full config again when the flow runs. Expression syntax is not checked in the browser.
 - A node type with no catalog entry (e.g. a third-party plugin) gets a raw JSON editor for its `config`, applied when the JSON parses as an object.
-- The canvas patches labels in place when only node names change, and redraws only when the set of nodes or edges changes. So typing in the panel does not reset pan or zoom.
+- Typing in the panel does not reset pan or zoom: the canvas syncs changes in place (see slice 7).
 
 **Opening and saving files** (set in slice 6):
 - The header shows the flow's name, a dot when there are unsaved changes, and **Open…** / **Save** buttons (also Ctrl/⌘+O and Ctrl/⌘+S). Open reads a local `.json` file. Save downloads the flow as `<file name>` — the opened file's name, or `<flow id>.flow.json` for a flow that did not come from a file. Writing back to the same file on disk (File System Access API) is not in scope.
@@ -346,6 +346,15 @@ Frontend lives in `frontend/` next to `backend/`. Same repo (monorepo decision d
   - Saving a flow with unsaved changes sets `metadata.updatedAt` to the current time (UTC, whole seconds), and `createdAt` too if it is missing. Saving an unchanged flow leaves both alone.
 - A file that fails to parse is reported in a message bar and the current flow stays open. Opening a file while there are unsaved changes asks for confirmation, and so does leaving the page.
 - The editor still starts with the hello example. "New flow" arrives with the palette (slice 7), since an empty flow cannot be edited without it.
+
+**Palette, new flow and deleting** (set in slice 7):
+- `<ff-palette>` on the left lists the catalog's node types, grouped as Triggers and Actions. Drag one onto the canvas to add it where it is dropped, or click it (or press Enter on it) to add it in the middle of the visible canvas.
+- A new node gets the next free ID `node-<n>`, the type's label as its name, and an empty `config`. It is selected straight away, so the property panel shows which required fields still need values.
+- **Delete** (or Backspace) removes the selected node together with its edges, unless the keyboard focus is in a text field. The property panel has a **Delete node** button too. Edges are removed by dragging their end off the input (slice 4).
+- **New** in the header starts an empty flow with ID `flow-<random>`, name "Untitled flow" and no file name, asking first if there are unsaved changes. The editor still opens with the hello example.
+- The flow's name is edited directly in the header. Its ID is fixed.
+- **Save is disabled while the flow has no nodes**, because the engine (and Open) reject a flow without nodes. An empty canvas shows a hint to drag a node in.
+- **Canvas sync:** the canvas tracks a document key that the app changes on Open and New. A new key means a new document: the canvas rebuilds and zooms to fit. Any other change from outside (adding, deleting, renaming) is applied in place — nodes and edges are added or removed individually — so pan and zoom are kept.
 
 ### Phase 3 — Server + Storage
 

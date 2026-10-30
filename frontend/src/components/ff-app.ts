@@ -1,7 +1,16 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { customElement, query, state } from 'lit/decorators.js'
+import { live } from 'lit/directives/live.js'
 import helloText from '../../../backend/examples/hello.flow.json?raw'
-import { setNodeConfig, setNodeName } from '../flow/edit.ts'
+import {
+  addNode,
+  createFlow,
+  removeNode,
+  setFlowName,
+  setNodeConfig,
+  setNodeName,
+  withEdgeIds,
+} from '../flow/edit.ts'
 import {
   FlowParseError,
   defaultFileName,
@@ -9,20 +18,27 @@ import {
   serializeFlow,
   stampSaved,
 } from '../flow/file.ts'
-import type { Flow } from '../flow/types.ts'
+import type { Flow, Position } from '../flow/types.ts'
+import { DROP_OFFSET, type FfCanvas, type NodeDrop } from './ff-canvas.ts'
 import './ff-canvas.ts'
 import './ff-node-panel.ts'
 import type { NodeChange } from './ff-node-panel.ts'
+import './ff-palette.ts'
 
-// The editor starts with the hello example until "New flow" exists (slice 7).
+// The editor opens with the hello example; New starts an empty flow.
 const initialFileName = 'hello.flow.json'
-const initialFlow = parseFlow(helloText)
+const initialFlow = withEdgeIds(parseFlow(helloText))
+
+// Clicking a palette item repeatedly would stack nodes exactly on top of
+// each other; each further one is shifted by this much.
+const STACK_STEP = 30
 
 /**
- * Root shell of the FlowForge editor: a header with the flow's name and
- * Open / Save, above the graph canvas, with the property panel of the
- * selected node beside it. Owns the Flow being edited, the selection, and the
- * file it came from. See "Opening and saving files" in docs/design.md.
+ * Root shell of the FlowForge editor: a header (flow name, New / Open /
+ * Save), the node palette, the graph canvas, and the property panel of the
+ * selected node. Owns the Flow being edited, the selection, and the file it
+ * came from. See "Opening and saving files" and "Palette, new flow and
+ * deleting" in docs/design.md.
  */
 @customElement('ff-app')
 export class FfApp extends LitElement {
@@ -36,23 +52,38 @@ export class FfApp extends LitElement {
     header {
       display: flex;
       align-items: center;
-      gap: 1rem;
+      gap: 0.75rem;
       padding: 0.5rem 1rem;
       border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent);
     }
 
     h1 {
-      margin: 0;
+      margin: 0 0.5rem 0 0;
       font-size: 1.125rem;
     }
 
     .flow-name {
       flex: 1;
       min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      opacity: 0.8;
+      display: flex;
+      align-items: center;
+      gap: 0.375rem;
+    }
+
+    .flow-name input {
+      min-width: 0;
+      max-width: 100%;
+      font: inherit;
+      padding: 0.25rem 0.375rem;
+      border: 1px solid transparent;
+      border-radius: 4px;
+      background: transparent;
+      color: inherit;
+    }
+
+    .flow-name input:hover,
+    .flow-name input:focus {
+      border-color: color-mix(in srgb, currentColor 30%, transparent);
     }
 
     .dirty {
@@ -84,18 +115,26 @@ export class FfApp extends LitElement {
       min-height: 0;
     }
 
+    ff-palette {
+      width: 14rem;
+      flex-shrink: 0;
+      border-right: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+    }
+
     ff-canvas {
       flex: 1;
+      min-width: 0;
     }
 
     ff-node-panel {
       width: 22rem;
-      max-width: 50%;
+      max-width: 40%;
+      flex-shrink: 0;
       border-left: 1px solid color-mix(in srgb, currentColor 20%, transparent);
     }
   `
 
-  /** The flow being edited. Canvas and panel report every edit as a new Flow. */
+  /** The flow being edited. Every edit replaces it with a new Flow. */
   @state()
   private flow: Flow = initialFlow
 
@@ -106,6 +145,10 @@ export class FfApp extends LitElement {
   /** Name of the file the flow came from, reused when saving. */
   @state()
   private fileName?: string = initialFileName
+
+  /** Changes on Open and New, telling the canvas a new document started. */
+  @state()
+  private docKey = 0
 
   /** ID of the selected node, if any. */
   @state()
@@ -118,8 +161,16 @@ export class FfApp extends LitElement {
   @query('input[type=file]')
   private fileInput!: HTMLInputElement
 
+  @query('ff-canvas')
+  private canvas!: FfCanvas
+
   private get dirty(): boolean {
     return this.flow !== this.savedFlow
+  }
+
+  // The engine (and Open) reject a flow without nodes, so it is not saved.
+  private get canSave(): boolean {
+    return this.flow.nodes.length > 0
   }
 
   connectedCallback() {
@@ -139,8 +190,19 @@ export class FfApp extends LitElement {
     return html`
       <header>
         <h1>FlowForge</h1>
-        <div class="flow-name" title=${this.fileName ?? ''}>
-          ${this.flow.name || this.flow.id}
+        <div class="flow-name">
+          <input
+            aria-label="Flow name"
+            title=${`ID ${this.flow.id}${this.fileName ? ` · ${this.fileName}` : ''}`}
+            placeholder=${this.flow.id}
+            size=${Math.max(12, (this.flow.name || this.flow.id).length + 1)}
+            .value=${live(this.flow.name)}
+            @input=${(e: Event) =>
+              (this.flow = setFlowName(
+                this.flow,
+                (e.target as HTMLInputElement).value,
+              ))}
+          />
           ${
             this.dirty
               ? html`<span
@@ -152,10 +214,19 @@ export class FfApp extends LitElement {
               : nothing
           }
         </div>
+        <button @click=${this.newFlow} title="Start an empty flow">New</button>
         <button @click=${this.open} title="Open a flow file (Ctrl+O)">
           Open…
         </button>
-        <button @click=${this.save} title="Download the flow (Ctrl+S)">
+        <button
+          @click=${this.save}
+          ?disabled=${!this.canSave}
+          title=${
+            this.canSave
+              ? 'Download the flow (Ctrl+S)'
+              : 'Add a node first: a flow needs at least one node'
+          }
+        >
           Save
         </button>
         <input
@@ -176,12 +247,18 @@ export class FfApp extends LitElement {
           : nothing
       }
       <div class="workspace">
+        <ff-palette
+          @node-add=${(e: CustomEvent<string>) => this.addAtCenter(e.detail)}
+        ></ff-palette>
         <ff-canvas
           .flow=${this.flow}
+          .docKey=${this.docKey}
           .selected=${node?.id}
           @flow-change=${(e: CustomEvent<Flow>) => (this.flow = e.detail)}
           @node-select=${(e: CustomEvent<string | null>) =>
             (this.selected = e.detail ?? undefined)}
+          @node-drop=${(e: CustomEvent<NodeDrop>) =>
+            this.addNodeAt(e.detail.type, e.detail.position)}
         ></ff-canvas>
         ${
           node
@@ -189,6 +266,8 @@ export class FfApp extends LitElement {
                 .node=${node}
                 @node-change=${(e: CustomEvent<NodeChange>) =>
                   this.applyNodeChange(e.detail)}
+                @node-delete=${(e: CustomEvent<string>) =>
+                  this.deleteNode(e.detail)}
                 @close=${() => (this.selected = undefined)}
               ></ff-node-panel>`
             : nothing
@@ -199,6 +278,52 @@ export class FfApp extends LitElement {
 
   private applyNodeChange({ id, name, config }: NodeChange) {
     this.flow = setNodeConfig(setNodeName(this.flow, id, name), id, config)
+  }
+
+  private addNodeAt(type: string, at: Position) {
+    const { flow, nodeId } = addNode(this.flow, type, at)
+    this.flow = flow
+    this.selected = nodeId
+  }
+
+  private addAtCenter(type: string) {
+    const center = this.canvas.viewCenter()
+    const at = { x: center.x - DROP_OFFSET.x, y: center.y - DROP_OFFSET.y }
+    const taken = (p: Position) =>
+      this.flow.nodes.some(
+        (n) =>
+          n.position.x === Math.round(p.x) && n.position.y === Math.round(p.y),
+      )
+    while (taken(at)) {
+      at.x += STACK_STEP
+      at.y += STACK_STEP
+    }
+    this.addNodeAt(type, at)
+  }
+
+  private deleteNode(id: string) {
+    this.flow = removeNode(this.flow, id)
+    if (this.selected === id) this.selected = undefined
+  }
+
+  // load replaces the document: new flow, nothing selected, canvas refit.
+  private load(flow: Flow, fileName: string | undefined) {
+    this.flow = flow
+    this.savedFlow = flow
+    this.fileName = fileName
+    this.selected = undefined
+    this.message = undefined
+    this.docKey++
+  }
+
+  private newFlow = () => {
+    if (
+      this.dirty &&
+      !confirm('Discard unsaved changes and start a new flow?')
+    ) {
+      return
+    }
+    this.load(createFlow(`flow-${crypto.randomUUID().slice(0, 8)}`), undefined)
   }
 
   private open = () => {
@@ -215,20 +340,17 @@ export class FfApp extends LitElement {
     if (!file) return
     let flow: Flow
     try {
-      flow = parseFlow(await file.text())
+      flow = withEdgeIds(parseFlow(await file.text()))
     } catch (e) {
       const reason = e instanceof FlowParseError ? e.message : String(e)
       this.message = `Could not open ${file.name}: ${reason}`
       return
     }
-    this.flow = flow
-    this.savedFlow = flow
-    this.fileName = file.name
-    this.selected = undefined
-    this.message = undefined
+    this.load(flow, file.name)
   }
 
   private save = () => {
+    if (!this.canSave) return
     // Only a flow with unsaved changes gets a new updatedAt, so saving twice
     // produces the same file.
     const flow = this.dirty ? stampSaved(this.flow, new Date()) : this.flow
@@ -240,6 +362,13 @@ export class FfApp extends LitElement {
   }
 
   private onKeydown = (e: KeyboardEvent) => {
+    if ((e.key === 'Delete' || e.key === 'Backspace') && !hasModifier(e)) {
+      if (this.selected && !isEditing(e)) {
+        e.preventDefault()
+        this.deleteNode(this.selected)
+      }
+      return
+    }
     if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return
     const key = e.key.toLowerCase()
     if (key === 's') {
@@ -254,6 +383,23 @@ export class FfApp extends LitElement {
   private onBeforeUnload = (e: BeforeUnloadEvent) => {
     if (this.dirty) e.preventDefault()
   }
+}
+
+function hasModifier(e: KeyboardEvent): boolean {
+  return e.ctrlKey || e.metaKey || e.altKey || e.shiftKey
+}
+
+// isEditing reports whether a key event is aimed at a text field, where
+// Delete and Backspace edit text instead of deleting nodes.
+function isEditing(e: KeyboardEvent): boolean {
+  const target = e.composedPath()[0]
+  if (!(target instanceof HTMLElement)) return false
+  return (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    target.isContentEditable
+  )
 }
 
 // download hands text to the browser as a file to save.

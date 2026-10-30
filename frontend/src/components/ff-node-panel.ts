@@ -26,6 +26,7 @@ export interface NodeChange {
  *
  * @fires node-change - detail is a NodeChange
  * @fires close - the user closed the panel
+ * @fires node-delete - detail is the node's ID; the user asked to delete it
  */
 @customElement('ff-node-panel')
 export class FfNodePanel extends LitElement {
@@ -120,6 +121,11 @@ export class FfNodePanel extends LitElement {
       cursor: pointer;
     }
 
+    .delete {
+      margin-top: 0.5rem;
+      color: #d33;
+    }
+
     .close {
       border: none;
       background: none;
@@ -189,6 +195,19 @@ export class FfNodePanel extends LitElement {
             )
           : this.renderJSON()
       }
+      <button
+        class="delete"
+        @click=${() =>
+          this.dispatchEvent(
+            new CustomEvent('node-delete', {
+              detail: node.id,
+              bubbles: true,
+              composed: true,
+            }),
+          )}
+      >
+        Delete node
+      </button>
     `
   }
 
@@ -418,5 +437,6 @@ declare global {
   }
   interface HTMLElementEventMap {
     'node-change': CustomEvent<NodeChange>
+    'node-delete': CustomEvent<string>
   }
 }
