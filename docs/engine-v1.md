@@ -111,7 +111,7 @@ type ExecutionContext struct {
 }
 ```
 
-Why `NodeResults` is on the context: it lets a node read upstream results beyond its immediate predecessor without changing the `Execute` signature. Useful for transforms that reference multiple nodes (`$nodes.node-1.body.id`).
+Why `NodeResults` is on the context: it lets a node read upstream results beyond its immediate predecessor without changing the `Execute` signature. Useful for transforms that reference multiple nodes (`nodes["node-1"].body.id`).
 
 ### 3.4 Flow model (in `internal/flow`)
 
@@ -340,7 +340,7 @@ Input/output payloads are recorded by reference in v1 (no deep copy). If a node 
 Rationale: choosing merge semantics (zip, join-on-key, wait-all, race) is a design decision that should not be made implicitly. We'd rather block it than ship a surprising default.
 
 ### Reading non-predecessor results
-Nodes that need data from elsewhere in the graph read `ctx.NodeResults[someNodeID]`. The `transform` node uses this for expressions like `$nodes.node-1.body.user`.
+Nodes that need data from elsewhere in the graph read `ctx.NodeResults[someNodeID]`. The `transform` node uses this for expressions like `nodes["node-1"].body.user`.
 
 ---
 
@@ -363,11 +363,21 @@ Each lives in `backend/internal/nodes/<name>.go` and registers itself via `init(
 
 ### `transform`
 - Config: `expression` (string, required) — an expression in [expr-lang/expr](https://github.com/expr-lang/expr) syntax.
-- Available identifiers: `input`, `nodes`, `env`.
-- Output: whatever the expression returns, coerced into `Payload`.
+- The expression is compiled once at `Init`, so syntax errors and unknown identifiers fail at load time. The compiled program is immutable and shared by concurrent executions.
+- Available identifiers:
+  - `input` — the node's input payload.
+  - `nodes` — `ctx.NodeResults` (nodeID → output). Node IDs usually contain `-`, so use index syntax: `nodes["node-1"].body.id`.
+  - `env` — process environment variables (`map[string]string`), snapshotted at `Init`.
+- Output: whatever the expression returns, coerced into `Payload`:
+  - a map (`map[string]any`) is used as-is;
+  - `nil` yields a `nil` payload;
+  - any other value (string, number, slice, …) is wrapped as `{"value": <result>}`.
+- A runtime evaluation error fails the node (§7).
 
 ### `log`
-- Config: `level` (string, default `info`), `message` (string, optional template).
+- Config: `level` (string, one of `debug`/`info`/`warn`/`error`, default `info`; anything else is an `Init` error), `message` (string, optional).
+- `message` is a Go `text/template`, parsed at `Init`, rendered with `.input` (the input payload) and `.nodes` (`ctx.NodeResults`). Example: `"hello {{.input.body.name}}"`. Default message: `"payload"`. A render error fails the node.
+- Writes one record through `log/slog`'s default logger with attributes `flow_id`, `execution_id` and `payload` (the input). A dedicated `Logger` on `ExecutionContext` (§3.3) is deferred until the CLI needs to route it.
 - Output: passes input through unchanged (so `log` can be inserted mid-flow without breaking downstream nodes).
 
 ---
