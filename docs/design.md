@@ -288,17 +288,17 @@ The 10 engine slices defined in [engine-v1.md §15](engine-v1.md#L294). Recapped
 ### Phase 2 — Visual Editor MVP (current)
 Frontend lives in `frontend/` next to `backend/`. Same repo (monorepo decision documented separately).
 
-| # | Slice | Notes |
-|---|---|---|
-| 1 | `frontend/` scaffold | Vite + LitElement + TS + ESLint + Prettier |
-| 2 | Embed a graph library | Rete.js v2 + its Lit renderer, chosen after a spike — see [ADR 0001](adr/0001-graph-library.md). `<ff-canvas>` with pan/zoom, drag and connect; no flow loaded yet |
-| 3 | Render a hardcoded Flow JSON on the canvas | Read-only, proves the JSON → visual mapping |
-| 4 | Make nodes draggable + edges connectable | Editing state lives in the frontend |
-| 5 | Property panel (per-node config form) | Generic JSON-schema-driven form, one per node type |
-| 6 | Save/load to local file (download/upload JSON) | No backend required yet |
-| 7 | Node palette (drag a new node onto the canvas) | Pull node types from a hardcoded list |
-| 8 | "Run" button → POST to backend `/flows/run` | Backend stays Phase-1 simple — accepts JSON in, runs once |
-| 9 | Live execution view (trace events streamed via SSE/WS) | First glimpse of the step-debugger |
+| # | Slice | Notes | Status |
+|---|---|---|---|
+| 1 | `frontend/` scaffold | Vite + LitElement + TS + ESLint + Prettier | ✅ done |
+| 2 | Embed a graph library | Rete.js v2 + its Lit renderer, chosen after a spike — see [ADR 0001](adr/0001-graph-library.md). `<ff-canvas>` with pan/zoom, drag and connect; no flow loaded yet | ✅ done |
+| 3 | Render a Flow JSON on the canvas | Display-only, proves the JSON → visual mapping | ✅ done |
+| 4 | Make nodes draggable + edges connectable | Edits update the Flow held in the frontend; cycles refused | ✅ done |
+| 5 | Property panel (per-node config form) | Generic JSON-schema-driven form, one per node type | next |
+| 6 | Save/load to local file (download/upload JSON) | No backend required yet | |
+| 7 | Node palette (drag a new node onto the canvas) | Pull node types from a hardcoded list | |
+| 8 | "Run" button → POST to backend `/flows/run` | Backend stays Phase-1 simple — accepts JSON in, runs once | |
+| 9 | Live execution view (trace events streamed via SSE/WS) | First glimpse of the step-debugger | |
 
 **Phase 2 done when:** a user can build the same `hello` flow visually, hit Run, and see the trace stream in real time.
 
@@ -316,7 +316,15 @@ Frontend lives in `frontend/` next to `backend/`. Same repo (monorepo decision d
 - Sockets: a trigger type (`http_trigger`, `cron_trigger`) gets one output and no input. Every other type, including unknown ones, gets one input and one output. Edges connect a source's output to a target's input. `sourceHandle` / `targetHandle` are ignored, as in the engine.
 - An edge whose source or target is not a node, whose target is a trigger, or that gives a node a second inbound edge is a load error. The canvas shows the error instead of a partial graph. The same rules are enforced by the engine (engine-v1.md §4.2, §10).
 - After loading, the view zooms to fit all nodes.
-- Until slice 4 the canvas is display-only: dragging and connecting still work on screen, but nothing is written back to the Flow.
+
+**Editing on the canvas** (set in slice 4):
+- The Flow object is the editing state. `<ff-canvas>` never mutates it: each edit produces a new Flow, which the canvas announces with a `flow-change` event (bubbles, composed). The owner stores it and passes it back. The canvas only redraws when it receives a Flow it did not produce itself.
+- Edits, each a pure function in `src/flow/edit.ts`:
+  - **Move a node** — when a drag ends, the node's `position` is updated, rounded to whole pixels so saved files stay diff-friendly.
+  - **Connect** — dragging from an output to an input adds an edge with a fresh ID (`edge-<n>`). Dropping on an input that already has an edge replaces that edge, since a node has at most one inbound edge.
+  - **Disconnect** — dragging an edge's end off its input removes the edge.
+- A connection that would create a cycle, including a node connected to itself, is refused before anything changes. The canvas shows a short notice, matching the engine's DAG rule (engine-v1.md §6).
+- Adding and deleting nodes are later slices (palette, slice 7).
 
 ### Phase 3 — Server + Storage
 

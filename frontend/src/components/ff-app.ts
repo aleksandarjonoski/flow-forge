@@ -1,5 +1,5 @@
 import { LitElement, css, html } from 'lit'
-import { customElement } from 'lit/decorators.js'
+import { customElement, state } from 'lit/decorators.js'
 import hello from '../../../backend/examples/hello.flow.json'
 import type { Flow } from '../flow/types.ts'
 import './ff-canvas.ts'
@@ -34,10 +34,17 @@ export class FfApp extends LitElement {
     }
   `
 
+  /** The flow being edited. The canvas reports every edit as a new Flow. */
+  @state()
+  private flow: Flow = initialFlow
+
   render() {
     return html`
       <header><h1>FlowForge</h1></header>
-      <ff-canvas .flow=${initialFlow}></ff-canvas>
+      <ff-canvas
+        .flow=${this.flow}
+        @flow-change=${(e: CustomEvent<Flow>) => (this.flow = e.detail)}
+      ></ff-canvas>
     `
   }
 }
