@@ -29,7 +29,8 @@ func TestTransform_InitErrors(t *testing.T) {
 		config  map[string]any
 		wantErr string
 	}{
-		{"missing expression", map[string]any{}, `"expression" is required`},
+		{"no mode", map[string]any{}, `needs either "expression", or "schema" and "mapping"`},
+		{"both modes", map[string]any{"expression": "1", "mapping": map[string]any{}}, "use one mode"},
 		{"empty expression", map[string]any{"expression": ""}, "must not be empty"},
 		{"non-string expression", map[string]any{"expression": 42}, "must be a string"},
 		{"syntax error", map[string]any{"expression": "input.("}, "compile expression"},

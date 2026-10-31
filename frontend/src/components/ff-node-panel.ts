@@ -4,14 +4,24 @@ import { live } from 'lit/directives/live.js'
 import { withConfigValue } from '../flow/edit.ts'
 import {
   nodeType,
-  validateConfig,
+  activeMode,
+  mappingProblems,
+  validateNode,
+  type ConfigMode,
+  type MappingProperty,
+  type NodeTypeSpec,
   type ConfigProperty,
   type SchemaProperty,
   type StringMapProperty,
   type StringProperty,
 } from '../flow/node-types.ts'
 import type { DataView } from '../flow/data-view.ts'
-import { parseSchema, problemText, type Schema } from '../flow/schema.ts'
+import {
+  parseSchema,
+  problemText,
+  schemaFields,
+  type Schema,
+} from '../flow/schema.ts'
 import {
   formatPath,
   inferShape,
@@ -167,6 +177,48 @@ export class FfNodePanel extends LitElement {
       justify-self: start;
     }
 
+    .label {
+      font-weight: 600;
+    }
+
+    .modes {
+      display: flex;
+      gap: 1rem;
+    }
+
+    .modes label {
+      font-weight: normal;
+    }
+
+    .mapping {
+      display: grid;
+      gap: 0.25rem;
+    }
+
+    .map-row {
+      display: grid;
+      grid-template-columns: minmax(6rem, 40%) 1fr;
+      align-items: center;
+      gap: 0.5rem;
+      padding-left: calc(var(--depth) * 0.875rem);
+    }
+
+    .map-field {
+      font-family: ui-monospace, monospace;
+      font-weight: 600;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .map-field .type {
+      font-weight: normal;
+      opacity: 0.6;
+    }
+
+    .map-row input {
+      font-family: ui-monospace, monospace;
+    }
+
     .close {
       border: none;
       background: none;
@@ -237,7 +289,8 @@ export class FfNodePanel extends LitElement {
     const node = this.node
     if (!node) return nothing
     const spec = nodeType(node.type)
-    const errors = spec ? validateConfig(spec.config, node.config) : {}
+    const errors = spec ? validateNode(spec, node.config) : {}
+    const mode = spec && activeMode(spec, node.config)
     return html`
       <header>
         <div>
@@ -276,9 +329,12 @@ export class FfNodePanel extends LitElement {
       </div>
       ${
         spec
-          ? Object.entries(spec.config.properties).map(([key, prop]) =>
-              this.renderField(key, prop, node.config[key], errors[key]),
-            )
+          ? html`${mode ? this.renderModes(spec, mode) : nothing}
+            ${Object.entries(spec.config.properties)
+              .filter(([key]) => !mode || mode.keys.includes(key))
+              .map(([key, prop]) =>
+                this.renderField(key, prop, node.config[key], errors[key]),
+              )}`
           : this.renderJSON()
       }
       <button
@@ -313,7 +369,9 @@ export class FfNodePanel extends LitElement {
             ? this.renderString(id, key, prop, value, error)
             : prop.type === 'schema'
               ? this.renderSchema(id, key, prop, value)
-              : this.renderMap(key, prop, value)
+              : prop.type === 'mapping'
+                ? this.renderMapping(key, prop, value)
+                : this.renderMap(key, prop, value)
         }
         ${
           prop.description
@@ -321,8 +379,8 @@ export class FfNodePanel extends LitElement {
             : nothing
         }
         ${
-          // Schema fields list all their problems themselves.
-          error && prop.type !== 'schema'
+          // Schema and mapping fields list all their problems themselves.
+          error && prop.type !== 'schema' && prop.type !== 'mapping'
             ? html`<div class="error" id="${id}-error">${error}</div>`
             : nothing
         }
@@ -550,35 +608,63 @@ export class FfNodePanel extends LitElement {
     `
   }
 
-  // insertTarget is the config field that clicked input paths go into.
-  private insertTarget(): (InsertTarget & { key: string }) | undefined {
-    const spec = nodeType(this.node?.type ?? '')
-    if (!spec) return undefined
-    const insertable = Object.entries(spec.config.properties).filter(
-      ([, p]) => p.type === 'string' && p['x-insert'],
-    ) as [string, StringProperty][]
-    const [key, prop] =
-      insertable.find(([k]) => k === this.insertKey) ?? insertable[0] ?? []
-    if (!key || !prop) return undefined
-    return { key, label: prop.title, style: prop['x-insert']! }
+  // insertTargets lists the places clicked input paths can go: string config
+  // fields with an insert style, and every mapping row, of the active mode.
+  private insertTargets(): Target[] {
+    const node = this.node
+    const spec = nodeType(node?.type ?? '')
+    if (!node || !spec) return []
+    const mode = activeMode(spec, node.config)
+    const targets: Target[] = []
+    for (const [key, prop] of Object.entries(spec.config.properties)) {
+      if (mode && !mode.keys.includes(key)) continue
+      if (prop.type === 'string' && prop['x-insert']) {
+        targets.push({
+          id: key,
+          label: prop.title,
+          style: prop['x-insert'],
+          selector: `#cfg-${key}`,
+          current: () => stringOr(this.node?.config[key]),
+          write: (next) => this.setConfig(key, next === '' ? undefined : next),
+        })
+      } else if (prop.type === 'mapping') {
+        const { schema } = parseSchema(node.config[prop.schemaKey])
+        if (schema?.type !== 'object') continue
+        for (const field of schemaFields(schema)) {
+          targets.push({
+            id: `mapping:${field.path}`,
+            label: `the mapping of ${field.path}`,
+            style: 'expr',
+            selector: `[data-map-path="${CSS.escape(field.path)}"]`,
+            current: () =>
+              stringOr(mappingOf(this.node?.config[key])[field.path]),
+            write: (next) => this.setMapping(key, field.path, next),
+          })
+        }
+      }
+    }
+    return targets
+  }
+
+  // insertTarget is where clicked input paths go: the insertable field
+  // focused last, or the first one.
+  private insertTarget(): Target | undefined {
+    const targets = this.insertTargets()
+    return targets.find((t) => t.id === this.insertKey) ?? targets[0]
   }
 
   // insertPath writes a clicked input path into the target field: at the
   // cursor for expressions and templates; replacing the value for a plain
   // path field, which holds exactly one path.
   private insertPath(segments: PathSegment[]) {
-    const node = this.node
     const target = this.insertTarget()
-    if (!node || !target) return
+    if (!target) return
     const text = formatPath(segments, target.style)
     if (!text) return
     const el = this.renderRoot.querySelector<
       HTMLInputElement | HTMLTextAreaElement
-    >(`#cfg-${target.key}`)
-    const current =
-      typeof node.config[target.key] === 'string'
-        ? (node.config[target.key] as string)
-        : ''
+    >(target.selector)
+    const current = target.current()
     let next = text
     let cursor = text.length
     if (target.style !== 'path') {
@@ -594,7 +680,127 @@ export class FfNodePanel extends LitElement {
       el.focus()
       el.setSelectionRange(cursor, cursor)
     }
-    this.setConfig(target.key, next)
+    target.write(next)
+  }
+
+  // renderModes shows the mode switch for node types with several modes.
+  private renderModes(spec: NodeTypeSpec, mode: ConfigMode) {
+    return html`
+      <div class="field">
+        <span class="label">Mode</span>
+        <div class="modes" role="radiogroup" aria-label="Mode">
+          ${spec.modes!.map(
+            (m) =>
+              html`<label
+                ><input
+                  type="radio"
+                  name="mode"
+                  .checked=${m === mode}
+                  @change=${() => this.switchMode(spec, mode, m)}
+                />
+                ${m.label}</label
+              >`,
+          )}
+        </div>
+      </div>
+    `
+  }
+
+  // switchMode removes the current mode's settings (asking first if there
+  // is anything to lose) and seeds the new mode's.
+  private switchMode(spec: NodeTypeSpec, from: ConfigMode, to: ConfigMode) {
+    const node = this.node
+    if (!node || from === to) return
+    const config = { ...node.config }
+    const meaningful = from.keys.some(
+      (k) =>
+        k in config &&
+        JSON.stringify(config[k]) !== JSON.stringify(seed(spec, k)),
+    )
+    if (
+      meaningful &&
+      !confirm(
+        `Switch to ${to.label} mode? The ${from.label.toLowerCase()} settings will be removed.`,
+      )
+    ) {
+      this.requestUpdate() // put the radio back
+      return
+    }
+    for (const k of from.keys) delete config[k]
+    for (const k of to.keys) {
+      const value = seed(spec, k)
+      if (value !== undefined) config[k] = value
+    }
+    this.schemaDrafts = new Map()
+    this.schemaJSONError = undefined
+    this.insertKey = undefined
+    this.emit({ config })
+  }
+
+  // renderMapping lists the output schema's fields, each with the
+  // expression that fills it (docs/data-v1.md §5). The visual mapper with
+  // lines comes later (§7.2); this is its text form.
+  private renderMapping(key: string, prop: MappingProperty, value: unknown) {
+    const schemaValue = this.node?.config[prop.schemaKey]
+    const { schema } = parseSchema(schemaValue)
+    if (schema?.type !== 'object') {
+      return html`<div class="hint">
+        Define a valid output schema above to map its fields.
+      </div>`
+    }
+    const fields = schemaFields(schema)
+    if (!fields.length) {
+      return html`<div class="hint">
+        Add fields to the output schema above, then map each one here.
+      </div>`
+    }
+    const mapping = mappingOf(value)
+    const problems = mappingProblems(value ?? {}, schemaValue)
+    return html`
+      <div class="mapping">
+        ${fields.map(
+          (f) => html`
+            <div class="map-row" style="--depth: ${f.depth}">
+              <span class="map-field"
+                >${f.name}${f.required ? ' *' : ''}
+                <span class="type">${f.type}</span></span
+              >
+              <input
+                aria-label="Mapping of ${f.path}"
+                data-map-path=${f.path}
+                spellcheck="false"
+                placeholder=${
+                  f.type === 'object'
+                    ? 'whole object (optional)'
+                    : f.required
+                      ? 'required'
+                      : ''
+                }
+                .value=${live(stringOr(mapping[f.path]))}
+                @focus=${() => (this.insertKey = `mapping:${f.path}`)}
+                @input=${(e: Event) =>
+                  this.setMapping(key, f.path, inputValue(e))}
+              />
+            </div>
+          `,
+        )}
+      </div>
+      ${
+        problems.length
+          ? html`<ul class="error problems">
+              ${problems.map((p) => html`<li>${p}</li>`)}
+            </ul>`
+          : nothing
+      }
+    `
+  }
+
+  // setMapping sets one field's expression; an empty one unmaps the field.
+  private setMapping(key: string, path: string, text: string) {
+    const mapping = { ...mappingOf(this.node?.config[key]) }
+    if (text === '') delete mapping[path]
+    else mapping[path] = text
+    this.setConfig(key, mapping)
   }
 
   // renderMap edits a string→string object as rows. Names are applied on
@@ -702,9 +908,10 @@ export class FfNodePanel extends LitElement {
   }
 
   private isRequired(key: string): boolean {
-    return (
-      nodeType(this.node?.type ?? '')?.config.required?.includes(key) ?? false
-    )
+    const spec = nodeType(this.node?.type ?? '')
+    if (!spec || !this.node) return false
+    const mode = activeMode(spec, this.node.config)
+    return (mode?.required ?? spec.config.required ?? []).includes(key)
   }
 
   private setConfig(key: string, value: unknown) {
@@ -724,6 +931,33 @@ export class FfNodePanel extends LitElement {
       new CustomEvent('node-change', { detail, bubbles: true, composed: true }),
     )
   }
+}
+
+/** A place clicked input paths can be inserted into. */
+interface Target extends InsertTarget {
+  id: string
+  selector: string
+  current: () => string
+  write: (next: string) => void
+}
+
+// seed is the starting value of a config key when its mode is switched on:
+// an empty object schema and an empty mapping for the mapping mode.
+function seed(spec: NodeTypeSpec, key: string): unknown {
+  const prop = spec.config.properties[key]
+  if (prop?.type === 'schema') return { type: 'object' }
+  if (prop?.type === 'mapping') return {}
+  return undefined
+}
+
+function mappingOf(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
+}
+
+function stringOr(value: unknown): string {
+  return typeof value === 'string' ? value : ''
 }
 
 // schemaProblems lists everything wrong with a declared schema, including a

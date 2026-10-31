@@ -61,10 +61,11 @@ function outputOf(
       return { shape: inferShape(run.output ?? {}), source: 'run' }
     }
   }
-  const contract = nodeType(node.type)?.output ?? {
+  const output = nodeType(node.type)?.output ?? {
     type: 'any',
     note: 'unknown node type',
   }
+  const contract = typeof output === 'function' ? output(node.config) : output
   if (contract === 'declared') {
     const { schema } = parseSchema(node.config.schema)
     return schema?.type === 'object'

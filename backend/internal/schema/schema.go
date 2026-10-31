@@ -338,3 +338,96 @@ func sortedKeys[V any](m map[string]V) []string {
 	slices.Sort(keys)
 	return keys
 }
+
+// CheckMapping checks the keys of a mapping (docs/data-v1.md §5) against a
+// schema: every key is a dot path to a field, reached through object fields
+// only; no key is inside another mapped key; and every required field is
+// mapped, either directly or, for an object field, through mappings of its
+// own fields that cover all of its required fields. Problems are reported
+// at the key or field path they concern.
+func (s *Schema) CheckMapping(keys []string) []Problem {
+	var problems []Problem
+	sorted := slices.Clone(keys)
+	slices.Sort(sorted)
+	mapped := make(map[string]bool, len(keys))
+	for _, key := range sorted {
+		if _, err := s.field(key); err != "" {
+			problems = append(problems, Problem{Path: key, Message: err})
+			continue
+		}
+		mapped[key] = true
+	}
+	for _, key := range sorted {
+		if !mapped[key] {
+			continue // already reported as not a field
+		}
+		for other := range mapped {
+			if other != key && strings.HasPrefix(key, other+".") {
+				problems = append(problems, Problem{Path: key, Message: fmt.Sprintf("is inside %q, which is mapped as a whole", other)})
+				break
+			}
+		}
+	}
+	s.checkRequired("", mapped, &problems)
+	return problems
+}
+
+// field resolves a dot path to a field schema, or explains why it cannot.
+func (s *Schema) field(path string) (*Schema, string) {
+	cur := s
+	for i, name := range strings.Split(path, ".") {
+		if cur.Type != "object" {
+			return nil, fmt.Sprintf("%q is not an object", strings.Join(strings.Split(path, ".")[:i], "."))
+		}
+		next := cur.Properties[name]
+		if next == nil {
+			return nil, "no such field in the schema"
+		}
+		cur = next
+	}
+	return cur, ""
+}
+
+// checkRequired reports required fields of the object at path that the
+// mapping does not cover.
+func (s *Schema) checkRequired(path string, mapped map[string]bool, problems *[]Problem) {
+	for _, name := range s.Required {
+		child := join(path, name)
+		if !covers(s.Properties[name], child, mapped) {
+			*problems = append(*problems, Problem{Path: child, Message: "required field is not mapped"})
+		}
+	}
+	for _, name := range sortedKeys(s.Properties) {
+		child := join(path, name)
+		if s.Properties[name].Type == "object" && !mapped[child] && mappedBelow(child, mapped) {
+			s.Properties[name].checkRequired(child, mapped, problems)
+		}
+	}
+}
+
+// covers reports whether the field at path gets a value: mapped directly,
+// or an object with something mapped below it and all its required fields
+// covered.
+func covers(field *Schema, path string, mapped map[string]bool) bool {
+	if mapped[path] {
+		return true
+	}
+	if field.Type != "object" || !mappedBelow(path, mapped) {
+		return false
+	}
+	for _, name := range field.Required {
+		if !covers(field.Properties[name], join(path, name), mapped) {
+			return false
+		}
+	}
+	return true
+}
+
+func mappedBelow(path string, mapped map[string]bool) bool {
+	for k := range mapped {
+		if strings.HasPrefix(k, path+".") {
+			return true
+		}
+	}
+	return false
+}

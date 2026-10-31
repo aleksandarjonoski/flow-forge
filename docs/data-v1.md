@@ -145,6 +145,16 @@ A transform has either `expression` or `schema` + `mapping`, never both (load-ti
 
 The output therefore always matches `schema`, just like `parse_json`.
 
+### Errors
+- Load time (all at once, one line): `config "mapping": customer.zip: no such field in the schema; customer: required field is not mapped; greeting: compile: unexpected token EOF (1:6) …`. The key checks (fields exist, no key inside another, required fields covered) are shared with the editor through `backend/internal/schema/testdata/cases.json`.
+- Run time: every field whose expression fails is named (`customer.city: evaluate: …`); otherwise a result that does not fit the schema fails with `output does not match the schema: customer.vip: expected boolean, got string; …`.
+
+### In the property panel (slice 3)
+- A **Mode** switch (Expression / Mapping). Switching asks first when the current mode has settings, removes them, and starts the new mode from an empty object schema and an empty mapping.
+- **Output schema**: the same schema field as `parse_json` (JSON view, Generate from sample / last run).
+- **Mapping**: one row per schema field (depth-first, as declared), each with its expression; object fields can also be mapped whole. Clicking a field in the Input box inserts its path into the focused row. Problems (unknown fields, unmapped required fields) are listed under the rows.
+- This is the text form of the mapper; the visual mapper with lines (§7.2) replaces it as the main way to map, in the wide node editor.
+
 ### Why structured config, not a generated expression
 The mapping is stored as fields, not as one generated `{ greeting: …, customer: {…} }` expression, because the editor must be able to read it back and redraw the lines. Turning arbitrary expression text back into a mapping is not reliably possible.
 

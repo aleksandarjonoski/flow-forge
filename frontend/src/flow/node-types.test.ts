@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import hello from '../../../backend/examples/hello.flow.json'
-import { NODE_TYPES, nodeType, validateConfig } from './node-types.ts'
+import {
+  NODE_TYPES,
+  activeMode,
+  nodeType,
+  validateConfig,
+  validateNode,
+} from './node-types.ts'
 import { isTrigger } from './types.ts'
 
 const schema = (type: string) => nodeType(type)!.config
@@ -50,7 +56,7 @@ describe('catalog', () => {
 
   it('accepts the hello example as valid', () => {
     for (const n of hello.nodes) {
-      expect(validateConfig(schema(n.type), n.config), n.id).toEqual({})
+      expect(validateNode(nodeType(n.type)!, n.config), n.id).toEqual({})
     }
   })
 })
@@ -116,5 +122,46 @@ describe('validateConfig', () => {
     expect(
       validateConfig(schema('transform'), { expression: 42, extra: true }),
     ).toEqual({ expression: 'Must be text.' })
+  })
+})
+
+describe('transform modes', () => {
+  const spec = nodeType('transform')!
+  const orderSchema = {
+    type: 'object',
+    properties: { greeting: { type: 'string' }, n: { type: 'number' } },
+    required: ['greeting'],
+  }
+
+  it('picks the mode from the config keys', () => {
+    expect(activeMode(spec, {})?.label).toBe('Expression')
+    expect(activeMode(spec, { expression: 'x' })?.label).toBe('Expression')
+    expect(activeMode(spec, { schema: {} })?.label).toBe('Mapping')
+    expect(activeMode(spec, { mapping: {} })?.label).toBe('Mapping')
+  })
+
+  it('requires and checks only the active mode', () => {
+    expect(validateNode(spec, {})).toEqual({ expression: 'Required.' })
+    expect(validateNode(spec, { mapping: {} })).toEqual({ schema: 'Required.' })
+    expect(
+      validateNode(spec, {
+        schema: orderSchema,
+        mapping: { greeting: '"hi"' },
+      }),
+    ).toEqual({})
+  })
+
+  it('reports mapping problems and mixed modes', () => {
+    expect(
+      validateNode(spec, {
+        schema: orderSchema,
+        mapping: { zip: '"1"', n: 3 },
+      }),
+    ).toEqual({
+      mapping: 'n: expression must be text (and 2 more)',
+    })
+    expect(
+      validateNode(spec, { expression: 'x', schema: orderSchema }),
+    ).toEqual({ schema: 'Belongs to Mapping mode; use one mode.' })
   })
 })

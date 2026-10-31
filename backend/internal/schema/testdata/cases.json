@@ -6,31 +6,68 @@
         "type": "object",
         "title": "Order",
         "properties": {
-          "id": { "type": "integer" },
-          "status": { "type": "string", "enum": ["new", "done"] },
+          "id": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "new",
+              "done"
+            ]
+          },
           "customer": {
             "type": "object",
-            "properties": { "email": { "type": "string", "description": "Contact" } },
-            "required": ["email"]
+            "properties": {
+              "email": {
+                "type": "string",
+                "description": "Contact"
+              }
+            },
+            "required": [
+              "email"
+            ]
           },
-          "items": { "type": "array", "items": { "type": "number" } },
-          "note": { "type": "null" },
-          "paid": { "type": "boolean" }
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "note": {
+            "type": "null"
+          },
+          "paid": {
+            "type": "boolean"
+          }
         },
-        "required": ["id", "customer"]
+        "required": [
+          "id",
+          "customer"
+        ]
       },
       "problems": []
     },
     {
       "name": "not an object",
       "schema": "string",
-      "problems": ["must be a schema object, got string"]
+      "problems": [
+        "must be a schema object, got string"
+      ]
     },
     {
       "name": "missing and unknown types",
       "schema": {
         "type": "object",
-        "properties": { "a": {}, "b": { "type": "strin" }, "c": { "type": 3 } }
+        "properties": {
+          "a": {},
+          "b": {
+            "type": "strin"
+          },
+          "c": {
+            "type": 3
+          }
+        }
       },
       "problems": [
         "a: type is required",
@@ -43,7 +80,12 @@
       "schema": {
         "type": "object",
         "additionalProperties": false,
-        "properties": { "name": { "type": "string", "minLength": 1 } }
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
       },
       "problems": [
         "unsupported keyword \"additionalProperties\"",
@@ -55,9 +97,25 @@
       "schema": {
         "type": "object",
         "properties": {
-          "s": { "type": "string", "properties": {}, "items": { "type": "string" } },
-          "b": { "type": "boolean", "enum": [true] },
-          "n": { "type": "number", "required": ["x"] }
+          "s": {
+            "type": "string",
+            "properties": {},
+            "items": {
+              "type": "string"
+            }
+          },
+          "b": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "n": {
+            "type": "number",
+            "required": [
+              "x"
+            ]
+          }
         }
       },
       "problems": [
@@ -72,11 +130,26 @@
       "schema": {
         "type": "object",
         "properties": {
-          "a.b": { "type": "string" },
-          "status": { "type": "string", "enum": ["ok", 2] },
-          "level": { "type": "integer", "enum": [] }
+          "a.b": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              2
+            ]
+          },
+          "level": {
+            "type": "integer",
+            "enum": []
+          }
         },
-        "required": ["status", "missing", 7]
+        "required": [
+          "status",
+          "missing",
+          7
+        ]
       },
       "problems": [
         "field name \"a.b\" must be non-empty and must not contain \".\"",
@@ -91,15 +164,32 @@
       "schema": {
         "type": "object",
         "properties": {
-          "orders": { "type": "array", "items": { "type": "object", "properties": { "id": { "type": "int" } } } }
+          "orders": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "int"
+                }
+              }
+            }
+          }
         }
       },
-      "problems": ["orders[].id: unknown type \"int\""]
+      "problems": [
+        "orders[].id: unknown type \"int\""
+      ]
     },
     {
       "name": "title must be text",
-      "schema": { "type": "object", "title": 5 },
-      "problems": ["title must be a string"]
+      "schema": {
+        "type": "object",
+        "title": 5
+      },
+      "problems": [
+        "title must be a string"
+      ]
     }
   ],
   "validate": [
@@ -108,22 +198,63 @@
       "schema": {
         "type": "object",
         "properties": {
-          "name": { "type": "string" },
-          "address": { "type": "object", "properties": { "city": { "type": "string" } } },
-          "tags": { "type": "array", "items": { "type": "object", "properties": { "id": { "type": "integer" } } } }
+          "name": {
+            "type": "string"
+          },
+          "address": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string"
+              }
+            }
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
         },
-        "required": ["name"]
+        "required": [
+          "name"
+        ]
       },
       "value": {
         "name": "ada",
         "extra": true,
-        "address": { "city": "Skopje", "zip": "1000" },
-        "tags": [{ "id": 1, "label": "x" }, { "id": 2 }]
+        "address": {
+          "city": "Skopje",
+          "zip": "1000"
+        },
+        "tags": [
+          {
+            "id": 1,
+            "label": "x"
+          },
+          {
+            "id": 2
+          }
+        ]
       },
       "output": {
         "name": "ada",
-        "address": { "city": "Skopje" },
-        "tags": [{ "id": 1 }, { "id": 2 }]
+        "address": {
+          "city": "Skopje"
+        },
+        "tags": [
+          {
+            "id": 1
+          },
+          {
+            "id": 2
+          }
+        ]
       },
       "problems": []
     },
@@ -131,10 +262,21 @@
       "name": "optional fields may be missing",
       "schema": {
         "type": "object",
-        "properties": { "a": { "type": "string" }, "b": { "type": "number" } }
+        "properties": {
+          "a": {
+            "type": "string"
+          },
+          "b": {
+            "type": "number"
+          }
+        }
       },
-      "value": { "a": "x" },
-      "output": { "a": "x" },
+      "value": {
+        "a": "x"
+      },
+      "output": {
+        "a": "x"
+      },
       "problems": []
     },
     {
@@ -142,22 +284,65 @@
       "schema": {
         "type": "object",
         "properties": {
-          "id": { "type": "integer" },
-          "status": { "type": "string", "enum": ["new", "done"] },
+          "id": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "new",
+              "done"
+            ]
+          },
           "customer": {
             "type": "object",
-            "properties": { "email": { "type": "string" }, "age": { "type": "number" } },
-            "required": ["email"]
+            "properties": {
+              "email": {
+                "type": "string"
+              },
+              "age": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "email"
+            ]
           },
-          "items": { "type": "array", "items": { "type": "object", "properties": { "qty": { "type": "integer" } }, "required": ["qty"] } }
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "qty": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "qty"
+              ]
+            }
+          }
         },
-        "required": ["id", "customer"]
+        "required": [
+          "id",
+          "customer"
+        ]
       },
       "value": {
         "id": 1.5,
         "status": "open",
-        "customer": { "age": "36" },
-        "items": [{ "qty": 1 }, {}, { "qty": "2" }]
+        "customer": {
+          "age": "36"
+        },
+        "items": [
+          {
+            "qty": 1
+          },
+          {},
+          {
+            "qty": "2"
+          }
+        ]
       },
       "problems": [
         "customer.age: expected number, got string",
@@ -173,15 +358,34 @@
       "schema": {
         "type": "object",
         "properties": {
-          "n": { "type": "number" },
-          "i": { "type": "integer" },
-          "b": { "type": "boolean" },
-          "z": { "type": "null" },
-          "a": { "type": "array" },
-          "o": { "type": "object" }
+          "n": {
+            "type": "number"
+          },
+          "i": {
+            "type": "integer"
+          },
+          "b": {
+            "type": "boolean"
+          },
+          "z": {
+            "type": "null"
+          },
+          "a": {
+            "type": "array"
+          },
+          "o": {
+            "type": "object"
+          }
         }
       },
-      "value": { "n": "42", "i": 2.0, "b": "true", "z": 0, "a": {}, "o": [] },
+      "value": {
+        "n": "42",
+        "i": 2.0,
+        "b": "true",
+        "z": 0,
+        "a": {},
+        "o": []
+      },
       "problems": [
         "a: expected array, got object",
         "b: expected boolean, got string",
@@ -192,21 +396,380 @@
     },
     {
       "name": "top level of the wrong type",
-      "schema": { "type": "object" },
+      "schema": {
+        "type": "object"
+      },
       "value": "not an object",
-      "problems": ["expected object, got string"]
+      "problems": [
+        "expected object, got string"
+      ]
     },
     {
       "name": "numeric enum",
-      "schema": { "type": "object", "properties": { "level": { "type": "integer", "enum": [1, 2, 3] } } },
-      "value": { "level": 4 },
-      "problems": ["level: must be one of 1, 2, 3"]
+      "schema": {
+        "type": "object",
+        "properties": {
+          "level": {
+            "type": "integer",
+            "enum": [
+              1,
+              2,
+              3
+            ]
+          }
+        }
+      },
+      "value": {
+        "level": 4
+      },
+      "problems": [
+        "level: must be one of 1, 2, 3"
+      ]
     },
     {
       "name": "null where an object is required",
-      "schema": { "type": "object", "properties": { "c": { "type": "object" } }, "required": ["c"] },
-      "value": { "c": null },
-      "problems": ["c: expected object, got null"]
+      "schema": {
+        "type": "object",
+        "properties": {
+          "c": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "c"
+        ]
+      },
+      "value": {
+        "c": null
+      },
+      "problems": [
+        "c: expected object, got null"
+      ]
+    }
+  ],
+  "mapping": [
+    {
+      "name": "leaves and whole fields",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "greeting": {
+            "type": "string"
+          },
+          "customer": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string"
+              },
+              "vip": {
+                "type": "boolean"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "city"
+            ]
+          },
+          "orders": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "greeting",
+          "customer"
+        ]
+      },
+      "keys": [
+        "greeting",
+        "customer.city",
+        "customer.tags",
+        "orders"
+      ],
+      "problems": []
+    },
+    {
+      "name": "an object mapped as a whole",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "greeting": {
+            "type": "string"
+          },
+          "customer": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string"
+              },
+              "vip": {
+                "type": "boolean"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "city"
+            ]
+          },
+          "orders": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "greeting",
+          "customer"
+        ]
+      },
+      "keys": [
+        "greeting",
+        "customer"
+      ],
+      "problems": []
+    },
+    {
+      "name": "unknown fields and paths through non-objects",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "greeting": {
+            "type": "string"
+          },
+          "customer": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string"
+              },
+              "vip": {
+                "type": "boolean"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "city"
+            ]
+          },
+          "orders": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "greeting",
+          "customer"
+        ]
+      },
+      "keys": [
+        "greeting",
+        "customer.city",
+        "customer.zip",
+        "nope",
+        "greeting.x",
+        "orders.id"
+      ],
+      "problems": [
+        "customer.zip: no such field in the schema",
+        "greeting.x: \"greeting\" is not an object",
+        "nope: no such field in the schema",
+        "orders.id: \"orders\" is not an object"
+      ]
+    },
+    {
+      "name": "a key inside a whole-mapped object",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "greeting": {
+            "type": "string"
+          },
+          "customer": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string"
+              },
+              "vip": {
+                "type": "boolean"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "city"
+            ]
+          },
+          "orders": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "greeting",
+          "customer"
+        ]
+      },
+      "keys": [
+        "greeting",
+        "customer",
+        "customer.city"
+      ],
+      "problems": [
+        "customer.city: is inside \"customer\", which is mapped as a whole"
+      ]
+    },
+    {
+      "name": "required fields not mapped",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "greeting": {
+            "type": "string"
+          },
+          "customer": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string"
+              },
+              "vip": {
+                "type": "boolean"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "city"
+            ]
+          },
+          "orders": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "greeting",
+          "customer"
+        ]
+      },
+      "keys": [
+        "customer.vip"
+      ],
+      "problems": [
+        "greeting: required field is not mapped",
+        "customer: required field is not mapped",
+        "customer.city: required field is not mapped"
+      ]
+    },
+    {
+      "name": "nothing mapped",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "greeting": {
+            "type": "string"
+          },
+          "customer": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string"
+              },
+              "vip": {
+                "type": "boolean"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "city"
+            ]
+          },
+          "orders": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "greeting",
+          "customer"
+        ]
+      },
+      "keys": [],
+      "problems": [
+        "greeting: required field is not mapped",
+        "customer: required field is not mapped"
+      ]
     }
   ]
 }

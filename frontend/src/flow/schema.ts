@@ -90,7 +90,9 @@ function parse(
     } else if (!isObject(props)) {
       add('properties must be an object')
     } else {
-      s.properties = {}
+      // Check in sorted order (problems match the Go twin), but keep the
+      // fields in the order they were written, for display.
+      const parsed = new Map<string, Schema>()
       for (const name of sortedKeys(props)) {
         if (name === '' || name.includes('.')) {
           add(
@@ -99,6 +101,11 @@ function parse(
           continue
         }
         const child = parse(props[name], join(path, name), problems)
+        if (child) parsed.set(name, child)
+      }
+      s.properties = {}
+      for (const name of Object.keys(props)) {
+        const child = parsed.get(name)
         if (child) s.properties[name] = child
       }
     }
@@ -264,4 +271,127 @@ function show(v: unknown): string {
 
 function quote(s: string): string {
   return JSON.stringify(s)
+}
+
+/**
+ * Checks the keys of a mapping (docs/data-v1.md §5) against a schema, like
+ * the Go CheckMapping: every key is a dot path to a field through object
+ * fields; no key lies inside another mapped key; every required field is
+ * covered, directly or through its own fields.
+ */
+export function checkMapping(schema: Schema, keys: string[]): SchemaProblem[] {
+  const problems: SchemaProblem[] = []
+  const sorted = [...keys].sort()
+  const mapped = new Set<string>()
+  for (const key of sorted) {
+    const err = fieldError(schema, key)
+    if (err) problems.push({ path: key, message: err })
+    else mapped.add(key)
+  }
+  for (const key of sorted) {
+    if (!mapped.has(key)) continue // already reported as not a field
+    const outer = [...mapped].find((o) => o !== key && key.startsWith(`${o}.`))
+    if (outer) {
+      problems.push({
+        path: key,
+        message: `is inside ${quote(outer)}, which is mapped as a whole`,
+      })
+    }
+  }
+  checkRequired(schema, '', mapped, problems)
+  return problems
+}
+
+/** The schema of the field at a dot path, if the path is valid. */
+export function fieldAt(schema: Schema, path: string): Schema | undefined {
+  return fieldError(schema, path) ? undefined : walk(schema, path.split('.'))
+}
+
+function walk(schema: Schema, names: string[]): Schema {
+  let cur = schema
+  for (const name of names) cur = cur.properties![name]
+  return cur
+}
+
+function fieldError(schema: Schema, path: string): string | undefined {
+  const names = path.split('.')
+  let cur = schema
+  for (let i = 0; i < names.length; i++) {
+    if (cur.type !== 'object') {
+      return `${quote(names.slice(0, i).join('.'))} is not an object`
+    }
+    const next = cur.properties?.[names[i]]
+    if (!next) return 'no such field in the schema'
+    cur = next
+  }
+  return undefined
+}
+
+function checkRequired(
+  s: Schema,
+  path: string,
+  mapped: Set<string>,
+  problems: SchemaProblem[],
+) {
+  for (const name of s.required ?? []) {
+    const child = join(path, name)
+    if (!covers(s.properties![name], child, mapped)) {
+      problems.push({ path: child, message: 'required field is not mapped' })
+    }
+  }
+  for (const name of sortedKeys(s.properties ?? {})) {
+    const child = join(path, name)
+    const field = s.properties![name]
+    if (
+      field.type === 'object' &&
+      !mapped.has(child) &&
+      mappedBelow(child, mapped)
+    ) {
+      checkRequired(field, child, mapped, problems)
+    }
+  }
+}
+
+function covers(field: Schema, path: string, mapped: Set<string>): boolean {
+  if (mapped.has(path)) return true
+  if (field.type !== 'object' || !mappedBelow(path, mapped)) return false
+  return (field.required ?? []).every((name) =>
+    covers(field.properties![name], join(path, name), mapped),
+  )
+}
+
+function mappedBelow(path: string, mapped: Set<string>): boolean {
+  return [...mapped].some((k) => k.startsWith(`${path}.`))
+}
+
+/** One field of a schema, for listing fields in the editor. */
+export interface SchemaField {
+  path: string
+  name: string
+  type: SchemaType
+  required: boolean
+  depth: number
+}
+
+/**
+ * Lists a schema's fields depth-first in the order they are declared,
+ * descending into object fields (not into arrays, which are mapped whole).
+ */
+export function schemaFields(schema: Schema): SchemaField[] {
+  const out: SchemaField[] = []
+  const walkFields = (s: Schema, path: string, depth: number) => {
+    for (const [name, field] of Object.entries(s.properties ?? {})) {
+      const child = join(path, name)
+      out.push({
+        path: child,
+        name,
+        type: field.type,
+        required: s.required?.includes(name) ?? false,
+        depth,
+      })
+      if (field.type === 'object') walkFields(field, child, depth + 1)
+    }
+  }
+  walkFields(schema, '', 0)
+  return out
 }

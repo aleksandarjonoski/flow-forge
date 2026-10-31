@@ -1,4 +1,4 @@
-import { parseSchema, problemText } from './schema.ts'
+import { checkMapping, parseSchema, problemText } from './schema.ts'
 import type { InsertStyle, Shape } from './shape.ts'
 
 // The node type catalog: what the editor knows about each built-in node type.
@@ -33,7 +33,30 @@ export interface SchemaProperty {
   description?: string
 }
 
-export type ConfigProperty = StringProperty | StringMapProperty | SchemaProperty
+/**
+ * A mapping (docs/data-v1.md §5): output field path → expression, for the
+ * schema held in the config key `schemaKey`.
+ */
+export interface MappingProperty {
+  type: 'mapping'
+  title: string
+  description?: string
+  schemaKey: string
+}
+
+export type ConfigProperty =
+  StringProperty | StringMapProperty | SchemaProperty | MappingProperty
+
+/**
+ * One way of configuring a node type that has several (e.g. a transform's
+ * expression and mapping modes): the config keys it uses and which of them
+ * are required. A node uses one mode; its keys tell which.
+ */
+export interface ConfigMode {
+  label: string
+  keys: string[]
+  required: string[]
+}
 
 export interface ConfigSchema {
   type: 'object'
@@ -58,7 +81,13 @@ export interface NodeTypeSpec {
    * for nodes whose output matches the schema in their `schema` config
    * (docs/data-v1.md §4).
    */
-  output: Shape | 'input' | 'declared'
+  output:
+    | Shape
+    | 'input'
+    | 'declared'
+    | ((config: Record<string, unknown>) => Shape | 'declared')
+  /** Alternative ways to configure this type; see ConfigMode. */
+  modes?: ConfigMode[]
 }
 
 // Shapes shared by several contracts.
@@ -175,7 +204,8 @@ export const NODE_TYPES: readonly NodeTypeSpec[] = [
     type: 'transform',
     label: 'Transform',
     kind: 'action',
-    description: 'Computes a new payload with an expression.',
+    description:
+      'Computes a new payload: with one expression, or field by field into a declared schema.',
     config: {
       type: 'object',
       properties: {
@@ -187,10 +217,29 @@ export const NODE_TYPES: readonly NodeTypeSpec[] = [
           'x-multiline': true,
           'x-insert': 'expr',
         },
+        schema: {
+          type: 'schema',
+          title: 'Output schema',
+          description:
+            'The fields this transform outputs. The output is checked against it.',
+        },
+        mapping: {
+          type: 'mapping',
+          title: 'Mapping',
+          description:
+            'An expression per output field, over input, nodes and env. Map an object field as a whole, or its fields one by one.',
+          schemaKey: 'schema',
+        },
       },
-      required: ['expression'],
     },
-    output: ANY_BODY('whatever the expression returns'),
+    modes: [
+      { label: 'Expression', keys: ['expression'], required: ['expression'] },
+      { label: 'Mapping', keys: ['schema', 'mapping'], required: ['schema'] },
+    ],
+    output: (config) =>
+      'schema' in config
+        ? 'declared'
+        : ANY_BODY('whatever the expression returns'),
   },
   {
     type: 'log',
@@ -276,7 +325,9 @@ export function validateConfig(
         ? checkString(prop, value)
         : prop.type === 'schema'
           ? checkSchema(value)
-          : checkMap(value)
+          : prop.type === 'mapping'
+            ? firstOf(mappingProblems(value, config[prop.schemaKey]))
+            : checkMap(value)
     if (error) errors[key] = error
   }
   return errors
@@ -296,6 +347,79 @@ function checkString(prop: StringProperty, value: unknown): string | undefined {
     return 'Must be an absolute http(s) URL.'
   }
   return undefined
+}
+
+/** The mode a node's config is in: the first whose keys it uses, else the first. */
+export function activeMode(
+  spec: NodeTypeSpec,
+  config: Record<string, unknown>,
+): ConfigMode | undefined {
+  const modes = spec.modes
+  if (!modes?.length) return undefined
+  return modes.find((m) => m.keys.some((k) => k in config)) ?? modes[0]
+}
+
+/**
+ * Checks a node's config like validateConfig, taking modes into account:
+ * only the active mode's keys are checked and required, and keys of another
+ * mode are reported, since a node uses one mode.
+ */
+export function validateNode(
+  spec: NodeTypeSpec,
+  config: Record<string, unknown>,
+): Record<string, string> {
+  const mode = activeMode(spec, config)
+  if (!mode) return validateConfig(spec.config, config)
+  const properties = Object.fromEntries(
+    Object.entries(spec.config.properties).filter(([k]) =>
+      mode.keys.includes(k),
+    ),
+  )
+  const errors = validateConfig(
+    { type: 'object', properties, required: mode.required },
+    config,
+  )
+  for (const other of spec.modes ?? []) {
+    if (other === mode) continue
+    for (const k of other.keys) {
+      if (k in config)
+        errors[k] = `Belongs to ${other.label} mode; use one mode.`
+    }
+  }
+  return errors
+}
+
+/**
+ * Lists everything wrong with a mapping: its shape (field path → text) and
+ * its keys against the schema (docs/data-v1.md §5). Expression syntax is
+ * checked by the engine.
+ */
+export function mappingProblems(
+  value: unknown,
+  schemaValue: unknown,
+): string[] {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return ['Must be a set of field → expression pairs.']
+  }
+  const entries = Object.entries(value)
+  const notText = entries
+    .filter(([, v]) => typeof v !== 'string')
+    .map(([k]) => `${k}: expression must be text`)
+  const { schema } = parseSchema(schemaValue)
+  if (schema?.type !== 'object') return notText
+  return [
+    ...notText,
+    ...checkMapping(
+      schema,
+      entries.map(([k]) => k),
+    ).map(problemText),
+  ]
+}
+
+function firstOf(problems: string[]): string | undefined {
+  if (!problems.length) return undefined
+  const more = problems.length > 1 ? ` (and ${problems.length - 1} more)` : ''
+  return `${problems[0]}${more}`
 }
 
 // checkSchema reports the first problem of a declared schema, with a count

@@ -117,3 +117,35 @@ func TestError_OneProblemPerLine(t *testing.T) {
 		t.Errorf("Error() = %q", err.Error())
 	}
 }
+
+func TestCheckMapping_SharedCases(t *testing.T) {
+	b, err := os.ReadFile("testdata/cases.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c struct {
+		Mapping []struct {
+			Name     string   `json:"name"`
+			Schema   any      `json:"schema"`
+			Keys     []string `json:"keys"`
+			Problems []string `json:"problems"`
+		} `json:"mapping"`
+	}
+	if err := json.Unmarshal(b, &c); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range c.Mapping {
+		t.Run(tc.Name, func(t *testing.T) {
+			s, err := Parse(tc.Schema)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			got := messages(s.CheckMapping(tc.Keys))
+			if len(got) != 0 || len(tc.Problems) != 0 {
+				if !reflect.DeepEqual(got, tc.Problems) {
+					t.Errorf("problems =\n  %q\nwant\n  %q", got, tc.Problems)
+				}
+			}
+		})
+	}
+}
