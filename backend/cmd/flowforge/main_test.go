@@ -247,6 +247,20 @@ func TestRunServer(t *testing.T) {
 	if code := call(t, "POST", s.flows+"/webhook", `{"name": "ada"}`, nil); code != http.StatusAccepted {
 		t.Errorf("POST /webhook = %d, want 202", code)
 	}
+	// The editor page is served at / beside the API.
+	resp, err := http.Get(s.api + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html") {
+		t.Errorf("GET / = %d %s, want an HTML page", resp.StatusCode, resp.Header.Get("Content-Type"))
+	}
+	// Unknown API paths are API 404s, not the editor.
+	if code := call(t, "GET", s.api+"/api/nope", "", nil); code != http.StatusNotFound {
+		t.Errorf("GET /api/nope = %d, want 404", code)
+	}
+
 	// The editor API is not served on the flows listener, and the reverse.
 	if code := call(t, "GET", s.flows+"/api/flows", "", nil); code != http.StatusNotFound {
 		t.Errorf("API on the flows listener = %d, want 404", code)

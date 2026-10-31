@@ -95,14 +95,14 @@ What FlowForge *can do* at each milestone. Each phase is a meaningful product st
 - A node editor with General / Input / Output tabs for every node.
 - Full design: [data-v1.md](data-v1.md).
 
-### Phase 3 — Server + Storage (next)
+### Phase 3 — Server + Storage ✅
 - **Install once, deploy many flows:** `flowforge serve` is one static binary that hosts the editor, the API and any number of running flows.
 - Flow library in SQLite (pure Go, no database server). Deploy and stop flows from the editor; deployed flows start again with the server.
 - Run history: every execution of a deployed flow is recorded with its trace and can be replayed in the editor.
 - One structured log line per execution, for standard log shippers.
 - Full design: [server-v1.md](server-v1.md).
 
-### Phase 4 — Production Basics
+### Phase 4 — Production Basics (next)
 - What a flow needs to be a real microservice: token auth for the API, request/response HTTP (return the flow's result, status codes, headers), path parameters, config and secrets from the environment, error handling (error edges), per-node timeouts and retries, health endpoints.
 
 ### Phase 5 — Messaging & Composition
@@ -399,7 +399,7 @@ Designed in [data-v1.md](data-v1.md); built in this order:
 
 **Phase 2.5 done when:** a webhook body can be parsed against a declared schema, mapped visually into a new shape in a transform, and every node after the parse shows the declared fields without a test run.
 
-### Phase 3 — Server + Storage (next)
+### Phase 3 — Server + Storage ✅
 Designed in [server-v1.md](server-v1.md); built in this order:
 
 | # | Slice | Description | Status |
@@ -410,13 +410,13 @@ Designed in [server-v1.md](server-v1.md); built in this order:
 | 4 | Run history | History sink with a batched writer (bounded queue, node events dropped under load, payloads over 64 KiB truncated); `GET /api/executions` paginated and `GET /api/executions/{id}` with the trace. | ✅ done |
 | 5 | Run logs | One `slog` line per finished execution in `serve` and `run`; `-log-format text|json` for log shippers. | ✅ done |
 | 6 | Editor flow library | Flows list with state badges, Save / Deploy / Stop, `409` reload-or-overwrite, file import/export, History tab that replays a recorded run on the canvas. | ✅ done |
-| 7 | One binary | `frontend/dist` embedded with `go:embed` (placeholder when not built), root `Makefile`, `time/tzdata`, `CGO_ENABLED=0` builds for Linux, macOS and Windows. | |
+| 7 | One binary | `frontend/dist` embedded with `go:embed` (a "not built in" page when absent), root `Makefile`, `time/tzdata`, `CGO_ENABLED=0` builds for Linux, macOS and Windows. | ✅ done |
 
 **Editor flow library** (set in slice 6): the editor rules are in [server-v1.md](server-v1.md) §7 — the Nodes / Flows tabs, Save / Deploy / Stop / History in the header, the message bar's choices for conflicts and imports, and the Results / History bottom panel. "Opening and saving files" (Phase 2) still holds for files, except that Save now stores on the server and Download exports a file.
 
 **Phase 3 done when:** on a machine with nothing installed, copying the `flowforge` binary and running `flowforge serve` gives an editor at `http://127.0.0.1:8090`; a flow built there can be deployed, called on `:8080`, and its executions opened in History; after restarting the server, the flow is running again.
 
-### Phase 4 — Production Basics
+### Phase 4 — Production Basics (next)
 Slices are planned when Phase 3 is done; the scope:
 - **API token auth** — a static token (`-api-token` / env) required on the editor listener, so the editor can be used on a remote server without an SSH tunnel.
 - **Request/response HTTP** — return the flow's result to the caller, with status code and headers chosen by the flow (today `http_trigger` always answers `202`).

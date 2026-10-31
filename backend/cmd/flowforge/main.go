@@ -21,6 +21,9 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
+	// Time zone data built in, so CRON_TZ schedules work on Windows and in
+	// minimal containers without zoneinfo (server-v1.md §8).
+	_ "time/tzdata"
 
 	"github.com/aleksandarjonoski/flow-forge/backend/internal/api"
 	"github.com/aleksandarjonoski/flow-forge/backend/internal/engine"
@@ -29,6 +32,7 @@ import (
 	"github.com/aleksandarjonoski/flow-forge/backend/internal/host"
 	_ "github.com/aleksandarjonoski/flow-forge/backend/internal/nodes" // register built-in nodes
 	"github.com/aleksandarjonoski/flow-forge/backend/internal/store"
+	"github.com/aleksandarjonoski/flow-forge/backend/internal/webui"
 )
 
 const usage = `usage:
@@ -243,11 +247,22 @@ func runServer(ctx context.Context, cfg serverConfig, apiLn, flowsLn net.Listene
 		slog.Warn("the editor API has no authentication and is reachable from the network", slog.String("addr", apiAddr))
 	}
 	slog.Info("flowforge serving",
-		slog.String("data", dir), slog.String("editor", apiAddr), slog.String("flows", flowsLn.Addr().String()))
+		slog.String("data", dir), slog.String("editor", "http://"+apiAddr), slog.String("flows", flowsLn.Addr().String()))
+	if !webui.Built() {
+		slog.Warn("this binary has no editor built in; only the API is served (build with `make build`)")
+	}
 
-	apiHandler := api.NewHandler(engine.DefaultRegistry, api.Options{Store: st, Host: h})
-	srvErr := serveHTTP(ctx, []listener{{apiLn, apiHandler}, {flowsLn, h.Handler()}})
+	srvErr := serveHTTP(ctx, []listener{{apiLn, editorHandler(st, h)}, {flowsLn, h.Handler()}})
 	return errors.Join(srvErr, h.Shutdown())
+}
+
+// editorHandler serves the editor listener: the API under /api/, and the
+// editor built into the binary everywhere else (server-v1.md §8).
+func editorHandler(st *store.Store, h *host.Host) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/api/", api.NewHandler(engine.DefaultRegistry, api.Options{Store: st, Host: h}))
+	mux.Handle("/", webui.Handler())
+	return mux
 }
 
 // isLoopback reports whether addr is a loopback address.

@@ -1,0 +1,6 @@
+# Build output (make build / make release)
+/bin/
+
+# The editor build copied in for go:embed; only the keep file is tracked.
+/backend/internal/webui/dist/*
+!/backend/internal/webui/dist/.gitkeep

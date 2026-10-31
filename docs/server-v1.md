@@ -1,6 +1,6 @@
 # FlowForge Server & Storage — Design v1
 
-Status: **Draft — for review**
+Status: **Implemented** (Phase 3)
 Scope: Phase 3 — one `flowforge serve` process that stores flows, runs many of them at once, keeps their run history, and serves the editor.
 Audience: implementers of the store, the flow host, the API and the editor's flow library.
 
@@ -332,9 +332,9 @@ The editor never takes a newer revision from the library list: the revision stay
 
 ## 8. One Binary
 
-- `frontend/dist` is embedded in the Go binary (`internal/webui`, `go:embed`), and `flowforge serve` serves it at `/` on the editor listener. One file to copy; nothing else.
-- `go:embed` cannot reach outside the module, so the build copies `frontend/dist` into `backend/internal/webui/dist/` first. That directory is git-ignored except a placeholder `index.html` which says the editor was not built; a plain `go build` therefore still works and serves the API.
-- A **`Makefile`** at the root: `make build` (frontend build, copy, `CGO_ENABLED=0 go build -trimpath -ldflags "-s -w"`), `make release` (the same for linux/amd64, linux/arm64, darwin/arm64, darwin/amd64, windows/amd64).
+- `frontend/dist` is embedded in the Go binary (`internal/webui`, `go:embed`), and `flowforge serve` serves it at `/` on the editor listener, beside `/api/`. One file to copy; nothing else. Hashed assets (`/assets/…`) are served as immutable; the page itself with `Cache-Control: no-cache`, so a new build is picked up.
+- `go:embed` cannot reach outside the module, so the build copies `frontend/dist` into `backend/internal/webui/dist/` first. That directory is git-ignored except an empty `.gitkeep`, so a plain `go build` still works: the binary then serves a short page at `/` saying the editor was not built in (and logs a warning at startup), plus the API. A committed placeholder `index.html` was rejected because every build would overwrite it and leave it modified in git.
+- A **`Makefile`** at the root: `make build` (frontend build, copy, `CGO_ENABLED=0 go build -trimpath -ldflags "-s -w"` to `bin/flowforge`), `make release` (the same for linux/amd64, linux/arm64, darwin/arm64, darwin/amd64, windows/amd64, as `bin/flowforge-<os>-<arch>[.exe]`), `make test`, `make clean`. `npm ci` runs only when `package-lock.json` changed. Building needs Go and Node 22; the binaries need nothing. Each is about 15–16 MB.
 - The binary embeds **`time/tzdata`**, so `CRON_TZ=Europe/Skopje` schedules work on Windows and minimal containers that have no zoneinfo.
 - During development nothing changes: Vite serves the editor and proxies `/api` to `flowforge serve`.
 
