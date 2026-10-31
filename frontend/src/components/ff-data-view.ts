@@ -160,16 +160,20 @@ export class FfDataView extends LitElement {
         Nothing is connected to this node's input yet.
       </div>`
     }
+    const declaredOf =
+      view.mode === 'output'
+        ? 'From the declared schema'
+        : `From the declared schema of ${view.from?.name ?? 'the previous node'}`
     const source =
       view.source === 'run'
         ? 'From the last test run.'
-        : view.source === 'declared'
-          ? view.mode === 'output'
-            ? 'From the declared schema.'
-            : `From the declared schema of ${view.from?.name ?? 'the previous node'}.`
-          : view.mode === 'input'
-            ? "From the previous node's type."
-            : "From the node's type."
+        : view.source === 'declared-run'
+          ? `${declaredOf}, with values from the last test run.`
+          : view.source === 'declared'
+            ? `${declaredOf}.`
+            : view.mode === 'input'
+              ? "From the previous node's type."
+              : "From the node's type."
     return html`
       <div class="source">
         ${source}

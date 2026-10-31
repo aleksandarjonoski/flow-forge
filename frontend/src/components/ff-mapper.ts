@@ -306,6 +306,7 @@ export class FfMapper extends LitElement {
     const via = {
       run: 'last run',
       declared: 'declared schema',
+      'declared-run': 'declared schema · last run values',
       type: 'node type',
     }[source.source]
     return html`<div class="source">

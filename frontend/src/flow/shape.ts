@@ -178,3 +178,35 @@ export function shapeAt(shape: Shape, path: string[]): Shape | undefined {
   }
   return cur
 }
+
+/**
+ * Fills a declared shape with sample values seen in a test run. The declared
+ * shape stays authoritative: its fields, types and required list are kept,
+ * fields the run lacked stay (without a value), and fields the run had but
+ * the schema does not are left out.
+ */
+export function withSamples(declared: Shape, observed: Shape): Shape {
+  if (declared.type === 'object') {
+    if (observed.type !== 'object') return declared
+    const fields: Record<string, Shape> = {}
+    for (const [k, v] of Object.entries(declared.fields ?? {})) {
+      const seen = observed.fields?.[k]
+      fields[k] = seen ? withSamples(v, seen) : v
+    }
+    return { ...declared, fields }
+  }
+  if (declared.type === 'array') {
+    if (observed.type !== 'array' || !declared.items || !observed.items) {
+      return declared
+    }
+    return { ...declared, items: withSamples(declared.items, observed.items) }
+  }
+  if (
+    'sample' in observed &&
+    observed.sample !== undefined &&
+    declared.type !== 'any'
+  ) {
+    return { ...declared, sample: observed.sample }
+  }
+  return declared
+}

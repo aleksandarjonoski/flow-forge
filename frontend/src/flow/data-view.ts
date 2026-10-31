@@ -3,13 +3,25 @@ import { nodeRuns } from '../api/trace.ts'
 import { nodeType } from './node-types.ts'
 import type { RefRoot } from './refs.ts'
 import { parseSchema } from './schema.ts'
-import { inferShape, shapeFromSchema, type Shape } from './shape.ts'
+import {
+  inferShape,
+  shapeFromSchema,
+  withSamples,
+  type Shape,
+} from './shape.ts'
 import { isTrigger, type Flow, type FlowNode } from './types.ts'
 
 // What the input data view shows for a node (docs/design.md, "Input data
 // view"; docs/data-v1.md §7.4): the shape of the data it receives, from the
 // last test run when that still applies, else from a declared schema, else
 // from the previous node's output contract.
+
+/**
+ * Where a shape comes from: the last test run; a declared schema; a declared
+ * schema filled with values from the last run ("declared-run"); or the node
+ * type's contract.
+ */
+export type DataSource = 'run' | 'declared' | 'declared-run' | 'type'
 
 /** A finished test run: the flow as it was run and its trace. */
 export interface LastRun {
@@ -28,7 +40,7 @@ export interface DataView {
   /** The data's shape; undefined when nothing is connected. */
   shape?: Shape
   /** Where the shape comes from. */
-  source: 'run' | 'declared' | 'type' | 'none'
+  source: DataSource | 'none'
 }
 
 export function dataView(
@@ -59,7 +71,7 @@ export interface SourceTree {
   nodeId: string
   nodeName: string
   shape: Shape
-  source: 'run' | 'declared' | 'type'
+  source: DataSource
 }
 
 /**
@@ -102,19 +114,23 @@ export function outputView(
   return { mode: 'output', ...outputOf(flow, node, lastRun, new Set()) }
 }
 
-// outputOf returns what a node outputs: its real output in the last run, if
-// that run still matches the flow up to this node; otherwise its declared
-// schema or its type's contract, following pass-through nodes upstream.
+// outputOf returns what a node outputs. A declared schema always wins, since
+// it is guaranteed while a run is one example (optional fields may be
+// missing); values from the last run are filled in when that run still
+// matches the flow up to this node. Without a declared schema: the real
+// output of the last run, else the type's contract, following pass-through
+// nodes upstream.
 function outputOf(
   flow: Flow,
   node: FlowNode,
   lastRun: LastRun | undefined,
   seen: Set<string>,
-): { shape: Shape; source: 'run' | 'declared' | 'type' } {
+): { shape: Shape; source: DataSource } {
+  let observed: Shape | undefined
   if (lastRun && sameUpstream(flow, lastRun.flow, node.id)) {
     const run = nodeRuns(lastRun.trace).find((r) => r.nodeId === node.id)
     if (run && (run.status === 'completed' || run.status === 'trigger')) {
-      return { shape: inferShape(run.output ?? {}), source: 'run' }
+      observed = inferShape(run.output ?? {})
     }
   }
   const output = nodeType(node.type)?.output ?? {
@@ -124,12 +140,19 @@ function outputOf(
   const contract = typeof output === 'function' ? output(node.config) : output
   if (contract === 'declared') {
     const { schema } = parseSchema(node.config.schema)
-    return schema?.type === 'object'
-      ? { shape: shapeFromSchema(schema), source: 'declared' }
-      : {
-          shape: { type: 'any', note: 'its schema is not complete yet' },
-          source: 'type',
-        }
+    if (schema?.type === 'object') {
+      const declared = shapeFromSchema(schema)
+      return observed
+        ? { shape: withSamples(declared, observed), source: 'declared-run' }
+        : { shape: declared, source: 'declared' }
+    }
+  }
+  if (observed) return { shape: observed, source: 'run' }
+  if (contract === 'declared') {
+    return {
+      shape: { type: 'any', note: 'its schema is not complete yet' },
+      source: 'type',
+    }
   }
   if (contract !== 'input') return { shape: contract, source: 'type' }
 

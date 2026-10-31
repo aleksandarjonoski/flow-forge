@@ -185,6 +185,41 @@ describe('dataView with a declared schema', () => {
     })
   })
 
+  it('keeps declared fields after a run that lacked them', () => {
+    // The parse ran with an empty output (an optional field was absent).
+    const run = {
+      flow: withParse,
+      trace: [
+        ev({
+          kind: 'execution_started',
+          nodeId: 'node-1',
+          nodeType: 'http_trigger',
+          input: {},
+        }),
+        ev({ kind: 'node_started', nodeId: 'node-9', nodeType: 'parse_json' }),
+        ev({
+          kind: 'node_completed',
+          nodeId: 'node-9',
+          nodeType: 'parse_json',
+          output: { qty: 3 },
+        }),
+      ],
+    }
+    expect(dataView(withParse, 'node-2', run)).toEqual({
+      mode: 'input',
+      from: { id: 'node-9', name: 'Parse Order' },
+      shape: {
+        type: 'object',
+        fields: {
+          name: { type: 'string' },
+          qty: { type: 'integer', sample: 3 },
+        },
+        required: [],
+      },
+      source: 'declared-run',
+    })
+  })
+
   it('falls back to "any" while the schema is incomplete', () => {
     const broken = setNodeConfig(withParse, 'node-9', { schema: { type: 'x' } })
     expect(dataView(broken, 'node-2')).toMatchObject({

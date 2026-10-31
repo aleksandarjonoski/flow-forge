@@ -467,7 +467,7 @@ export class FfNodePanel extends LitElement {
     }
     return html`
       ${
-        this.outputData?.source === 'run'
+        this.outputData?.source === 'declared-run'
           ? html`<ff-data-view .view=${this.outputData}></ff-data-view>`
           : nothing
       }
@@ -774,7 +774,8 @@ export class FfNodePanel extends LitElement {
   // in the last test run, at its "from" path; undefined when there is none.
   private runSampleSchema(): Schema | undefined {
     const view = this.dataView
-    if (view?.mode !== 'input' || view.source !== 'run' || !view.shape) {
+    const fromRun = view?.source === 'run' || view?.source === 'declared-run'
+    if (view?.mode !== 'input' || !fromRun || !view.shape) {
       return undefined
     }
     const from = this.node?.config.from

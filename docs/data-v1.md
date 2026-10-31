@@ -232,7 +232,7 @@ Used for `parse_json`'s schema and the transform's output schema. Slice 2 ships 
 - **Renames and removals carry over to the mapping.** In a mapping-mode transform, renaming a field also renames the mapping keys at or below it, and removing a field removes them, so mappings do not silently break.
 
 ### 7.4 Data view everywhere
-The input data view (design.md) gains a third source: **declared**. A node after `parse_json` or a mapping transform shows the declared fields immediately, labelled "From the declared schema of *Parse Order*", without a test run. Order of preference: last run (when it still applies) → declared schema → type contract.
+The input data view (design.md) gains a third source: **declared**. A node after `parse_json` or a mapping transform shows the declared fields immediately, labelled "From the declared schema of *Parse Order*", without a test run. Order of preference: **declared schema** (filled with values from the last run, when that run still applies) → last run → type contract. A declared schema wins over a run because it is guaranteed, while a run is one example: optional fields may be missing from it, and showing only what one run produced would hide declared fields.
 
 ---
 

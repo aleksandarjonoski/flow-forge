@@ -6,6 +6,7 @@ import {
   schemaFromShape,
   shapeAt,
   shapeFromSchema,
+  withSamples,
 } from './shape.ts'
 
 describe('inferShape', () => {
@@ -145,5 +146,31 @@ describe('schemas and shapes', () => {
     expect(shapeAt(shape, [])).toBe(shape)
     expect(shapeAt(shape, ['body', 'user', 'name', 'x'])).toBeUndefined()
     expect(shapeAt(shape, ['nope'])).toBeUndefined()
+  })
+})
+
+describe('withSamples', () => {
+  it('keeps the declared shape and fills in values seen in a run', () => {
+    const declared = shapeFromSchema({
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+        age: { type: 'integer' },
+        tags: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['name'],
+    })
+    const observed = inferShape({ name: 'ada', tags: ['x'], extra: true })
+    expect(withSamples(declared, observed)).toEqual({
+      type: 'object',
+      fields: {
+        name: { type: 'string', sample: 'ada' },
+        age: { type: 'integer' },
+        tags: { type: 'array', items: { type: 'string', sample: 'x' } },
+      },
+      required: ['name'],
+    })
+    // An empty run (all fields optional and absent) hides nothing.
+    expect(withSamples(declared, inferShape({}))).toEqual(declared)
   })
 })
