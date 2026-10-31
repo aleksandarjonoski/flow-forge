@@ -7,7 +7,7 @@ This is the contract between the visual editor (Layer 1) and the backend (Layer 
 
 ## Serving
 
-`flowforge serve [-addr 127.0.0.1:8090] [-flows-addr :8080] [-data dir]` serves the API on `-addr`, and the `http_trigger` routes of every deployed flow on `-flows-addr` ([server-v1.md](server-v1.md) §2). Flows and run history live in the data directory: `-data`, else `$FLOWFORGE_DATA`, else `~/.flowforge`.
+`flowforge serve [-addr 127.0.0.1:8090] [-flows-addr :8080] [-data dir] [-keep-executions 1000]` serves the API on `-addr`, and the `http_trigger` routes of every deployed flow on `-flows-addr` ([server-v1.md](server-v1.md) §2). Flows and run history live in the data directory: `-data`, else `$FLOWFORGE_DATA`, else `~/.flowforge`.
 
 - **Local use only.** There is no authentication, and a test run executes whatever flow it is given: `http_request` nodes can call any URL, and `transform` expressions can read the server's environment (`env`). So the default address is loopback. Binding to another interface is possible with `-addr`, but should not be done on an untrusted network.
 - During development the Vite dev server proxies `/api/*` to `http://127.0.0.1:8090`, so the editor and the API share an origin and no CORS is needed.
@@ -113,3 +113,36 @@ Stored flows, deploy and stop ([server-v1.md](server-v1.md) §4, §6). Served by
 - A flow's ID is fixed; on create it must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`.
 - The server stores the document as sent, plus one trailing newline. Responses carry it as a JSON value, so whitespace is not preserved in them.
 - **Lost-update guard:** a `PUT` whose `revision` is not the stored one — someone saved in between — is refused with `409` and `{"error": "…", "current": <the stored flow>}`, so the editor can offer to reload theirs or overwrite (save again with `current.revision`).
+
+## Run history
+
+Every execution of a deployed flow is recorded with its trace; test runs are not ([server-v1.md](server-v1.md) §5). The newest `-keep-executions` executions per flow are kept (default 1000, `0` keeps all).
+
+| Method + path | Answer |
+|---|---|
+| `GET /api/executions?flow={id}&limit=50&before={cursor}` | `200` with one page of the flow's executions, newest first. `flow` is required; `limit` is 1–200, default 50; `before` is the `next` of the previous page. `400` for a missing `flow`, a bad `limit` or a cursor the server did not issue; `404` for an unknown flow. |
+| `GET /api/executions/{id}` | `200` with the execution and its trace; `404` if unknown (or pruned). |
+
+```json
+{
+  "executions": [
+    {
+      "id": "af34e49d1bbf08df7c6ac39a1be15db3",
+      "flowId": "order-api",
+      "revision": 2,
+      "trigger": "node-1",
+      "status": "failed",
+      "error": "node node-2 (transform): …",
+      "startedAt": "2026-10-31T14:03:07.123Z",
+      "finishedAt": "2026-10-31T14:03:07.127Z",
+      "traceComplete": true
+    }
+  ],
+  "next": "<cursor>"
+}
+```
+
+- `status` is `running`, `completed`, `failed`, or `interrupted` (the server stopped without finishing it — a crash or a kill). `error` is present when failed; `finishedAt` once finished (never for an interrupted execution).
+- `next` is absent on the last page. `executions` is `[]` for a flow that never ran.
+- `traceComplete` is `false` when trace events of the execution were dropped because the server could not write them fast enough; its status is still exact.
+- `GET /api/executions/{id}` adds `"trace": [ … ]`: the events in order, the same shape as a test run's `trace`. A node input or output over 64 KiB is stored as `{"truncated": true, "bytes": <size>}`.

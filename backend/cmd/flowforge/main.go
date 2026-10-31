@@ -3,7 +3,7 @@
 // docs/server-v1.md §10.
 //
 //	flowforge run [-addr :8080] <flow.json>
-//	flowforge serve [-addr 127.0.0.1:8090] [-flows-addr :8080] [-data dir]
+//	flowforge serve [-addr 127.0.0.1:8090] [-flows-addr :8080] [-data dir] [-keep-executions 1000]
 package main
 
 import (
@@ -24,6 +24,7 @@ import (
 	"github.com/aleksandarjonoski/flow-forge/backend/internal/api"
 	"github.com/aleksandarjonoski/flow-forge/backend/internal/engine"
 	"github.com/aleksandarjonoski/flow-forge/backend/internal/flow"
+	"github.com/aleksandarjonoski/flow-forge/backend/internal/history"
 	"github.com/aleksandarjonoski/flow-forge/backend/internal/host"
 	_ "github.com/aleksandarjonoski/flow-forge/backend/internal/nodes" // register built-in nodes
 	"github.com/aleksandarjonoski/flow-forge/backend/internal/store"
@@ -32,7 +33,7 @@ import (
 const usage = `usage:
   flowforge run [-addr :8080] <flow.json>
       run a flow until interrupted
-  flowforge serve [-addr 127.0.0.1:8090] [-flows-addr :8080] [-data dir]
+  flowforge serve [-addr 127.0.0.1:8090] [-flows-addr :8080] [-data dir] [-keep-executions 1000]
       serve the editor API (local use only) and the deployed flows`
 
 // shutdownGrace is how long in-flight HTTP requests get on shutdown.
@@ -120,6 +121,7 @@ func serveCmd(args []string, stderr io.Writer) int {
 	addr := fs.String("addr", "127.0.0.1:8090", "listen address for the editor API (no auth: keep it local)")
 	flowsAddr := fs.String("flows-addr", ":8080", "listen address for the deployed flows' http_trigger routes")
 	data := fs.String("data", "", "data directory (default $FLOWFORGE_DATA, else ~/.flowforge)")
+	keep := fs.Int("keep-executions", history.DefaultKeep, "executions kept per flow in the run history (0 keeps all)")
 	if code := parseFlags(fs, args, 0, stderr); code >= 0 {
 		return code
 	}
@@ -145,7 +147,7 @@ func serveCmd(args []string, stderr io.Writer) int {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := runServer(ctx, dir, apiLn, flowsLn); err != nil {
+	if err := runServer(ctx, serverConfig{dir: dir, keep: *keep}, apiLn, flowsLn); err != nil {
 		fmt.Fprintf(stderr, "flowforge: %v\n", err)
 		return 1
 	}
@@ -169,12 +171,19 @@ func dataDir(flagValue string) (string, error) {
 	return filepath.Join(home, ".flowforge"), nil
 }
 
-// runServer opens the store in dir, starts the deployed flows and serves the
-// editor API on apiLn and the flows on flowsLn until ctx is cancelled. Then
-// both listeners stop accepting requests, the flows stop (staying deployed
-// for the next start) and the store closes (server-v1.md §4.5). It closes
-// both listeners.
-func runServer(ctx context.Context, dir string, apiLn, flowsLn net.Listener) error {
+// serverConfig is what `flowforge serve` was asked for.
+type serverConfig struct {
+	dir  string // data directory
+	keep int    // executions kept per flow
+}
+
+// runServer opens the store in cfg.dir, starts the deployed flows and serves
+// the editor API on apiLn and the flows on flowsLn until ctx is cancelled.
+// Then both listeners stop accepting requests, the flows stop (staying
+// deployed for the next start), the run history is flushed and the store
+// closes (server-v1.md §4.5). It closes both listeners.
+func runServer(ctx context.Context, cfg serverConfig, apiLn, flowsLn net.Listener) error {
+	dir := cfg.dir
 	st, err := store.Open(dir)
 	if err != nil {
 		apiLn.Close()
@@ -183,7 +192,9 @@ func runServer(ctx context.Context, dir string, apiLn, flowsLn net.Listener) err
 	}
 	defer st.Close()
 
-	h := host.New(st, engine.DefaultRegistry, host.Options{})
+	hist := history.New(st, history.Options{Keep: cfg.keep})
+	defer hist.Close() // after the flows stop: their last events are flushed
+	h := host.New(st, engine.DefaultRegistry, host.Options{Sink: hist.Sink})
 	res, err := h.Boot(ctx)
 	if err != nil {
 		apiLn.Close()

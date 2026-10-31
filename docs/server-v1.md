@@ -220,7 +220,7 @@ The newest **1000 executions per flow** are kept (`-keep-executions`, `0` = keep
 
 ## 6. API
 
-The editor's API, on the editor listener. Phase 2's rules carry over ([api-v1.md](api-v1.md)): JSON bodies, 1 MiB request limit, unknown request fields rejected, and the error shape `{"error": "…", "problems": [ … ]}`. These endpoints move into api-v1.md as they are built: the flow library (§6.1–6.3) is there now; executions (§6.4) follow with slice 4.
+The editor's API, on the editor listener. Phase 2's rules carry over ([api-v1.md](api-v1.md)): JSON bodies, 1 MiB request limit, unknown request fields rejected, and the error shape `{"error": "…", "problems": [ … ]}`. These endpoints move into api-v1.md as they are built: the flow library and run history are there now.
 
 ### 6.1 Endpoints
 

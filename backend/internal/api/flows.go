@@ -14,7 +14,8 @@ import (
 	"github.com/aleksandarjonoski/flow-forge/backend/internal/store"
 )
 
-// The flow library: stored flows, deploy and stop. See docs/server-v1.md §6.
+// The flow library: stored flows, deploy and stop, and their run history
+// (executions.go). See docs/server-v1.md §6.
 
 // flowIDPattern is what a stored flow's ID must match: it appears in URLs and
 // log lines (server-v1.md §6.2).
@@ -35,6 +36,8 @@ func (l *library) register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/flows/{id}", l.remove)
 	mux.HandleFunc("POST /api/flows/{id}/start", l.start)
 	mux.HandleFunc("POST /api/flows/{id}/stop", l.stop)
+	mux.HandleFunc("GET /api/executions", l.listExecutions)
+	mux.HandleFunc("GET /api/executions/{id}", l.getExecution)
 }
 
 // flowInfo is a stored flow as the API returns it (server-v1.md §6.3). The

@@ -407,7 +407,7 @@ Designed in [server-v1.md](server-v1.md); built in this order:
 | 1 | Store | `internal/store`: SQLite via pure-Go `modernc.org/sqlite`, a lock file so one server owns the data directory, embedded migrations versioned with `user_version`, flows stored verbatim with revisions and a lost-update guard, executions + trace events, retention. | ✅ done |
 | 2 | Flow host | `engine.Start` / `Instance.Stop`; `internal/host` runs one engine instance per flow on a shared trigger mux that names the flow owning a route, per-flow cron, states (stopped / running / failed), autostart on boot, `interrupted` marking after a crash. | ✅ done |
 | 3 | Flow API | `GET/POST/PUT/DELETE /api/flows…`, `start` / `stop`, `GET /api/health`; `flowforge serve` gains `-data` and `-flows-addr`, with separate editor and flows listeners. | ✅ done |
-| 4 | Run history | History sink with a batched writer (bounded queue, node events dropped under load, payloads over 64 KiB truncated); `GET /api/executions` paginated and `GET /api/executions/{id}` with the trace. | |
+| 4 | Run history | History sink with a batched writer (bounded queue, node events dropped under load, payloads over 64 KiB truncated); `GET /api/executions` paginated and `GET /api/executions/{id}` with the trace. | ✅ done |
 | 5 | Run logs | One `slog` line per finished execution in `serve` and `run`; `-log-format text|json` for log shippers. | |
 | 6 | Editor flow library | Flows list with state badges, Save / Deploy / Stop, `409` reload-or-overwrite, file import/export, History tab that replays a recorded run on the canvas. | |
 | 7 | One binary | `frontend/dist` embedded with `go:embed` (placeholder when not built), root `Makefile`, `time/tzdata`, `CGO_ENABLED=0` builds for Linux, macOS and Windows. | |

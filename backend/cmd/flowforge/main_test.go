@@ -167,7 +167,7 @@ func startServer(t *testing.T, dir string) *server {
 		cancel: cancel,
 		done:   make(chan error, 1),
 	}
-	go func() { s.done <- runServer(ctx, dir, apiLn, flowsLn) }()
+	go func() { s.done <- runServer(ctx, serverConfig{dir: dir, keep: 100}, apiLn, flowsLn) }()
 	t.Cleanup(func() { s.stop(t) })
 	return s
 }
@@ -252,6 +252,27 @@ func TestRunServer(t *testing.T) {
 	}
 	if code := call(t, "POST", s.api+"/webhook", "{}", nil); code != http.StatusNotFound {
 		t.Errorf("flow route on the editor listener = %d, want 404", code)
+	}
+
+	// The run is in the history, with its trace.
+	var page struct {
+		Executions []struct{ ID, Status string }
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for len(page.Executions) == 0 || page.Executions[0].Status == "running" {
+		if time.Now().After(deadline) {
+			t.Fatalf("no finished execution in the history: %+v", page)
+		}
+		time.Sleep(10 * time.Millisecond)
+		call(t, "GET", s.api+"/api/executions?flow=flow-hello", "", &page)
+	}
+	var exec struct {
+		Status string
+		Trace  []struct{ Kind string }
+	}
+	call(t, "GET", s.api+"/api/executions/"+page.Executions[0].ID, "", &exec)
+	if exec.Status != "completed" || len(exec.Trace) == 0 || exec.Trace[len(exec.Trace)-1].Kind != "execution_completed" {
+		t.Errorf("execution = %+v", exec)
 	}
 
 	// Restart on the same data directory: the flow is deployed again.
