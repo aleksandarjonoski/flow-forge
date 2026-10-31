@@ -1,6 +1,6 @@
 import { LitElement, css, html, nothing, type PropertyValues } from 'lit'
 import { customElement, property, state } from 'lit/decorators.js'
-import type { DataView } from '../flow/data-view.ts'
+import type { DataView, SourceTree } from '../flow/data-view.ts'
 import { activeMode, nodeType } from '../flow/node-types.ts'
 import type { FlowNode } from '../flow/types.ts'
 import './ff-data-view.ts'
@@ -111,6 +111,10 @@ export class FfNodeEditor extends LitElement {
   @property({ attribute: false })
   outputData?: DataView
 
+  /** Data the node can read, for the visual mapper. */
+  @property({ attribute: false })
+  sources: SourceTree[] = []
+
   @property({ type: Boolean })
   canRun = false
 
@@ -193,6 +197,7 @@ export class FfNodeEditor extends LitElement {
       .node=${node}
       .dataView=${this.dataView}
       .outputData=${this.outputData}
+      .sources=${this.sources}
       ?canRun=${this.canRun}
     ></ff-node-panel>`
   }

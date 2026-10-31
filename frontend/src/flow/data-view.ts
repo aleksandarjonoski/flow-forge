@@ -1,6 +1,7 @@
 import type { TraceEvent } from '../api/client.ts'
 import { nodeRuns } from '../api/trace.ts'
 import { nodeType } from './node-types.ts'
+import type { RefRoot } from './refs.ts'
 import { parseSchema } from './schema.ts'
 import { inferShape, shapeFromSchema, type Shape } from './shape.ts'
 import { isTrigger, type Flow, type FlowNode } from './types.ts'
@@ -47,6 +48,47 @@ export function dataView(
     from: { id: from.id, name: from.name || from.type },
     ...outputOf(flow, from, lastRun, new Set()),
   }
+}
+
+/** One tree on the mapper's left side: data a node can read (§6.1). */
+export interface SourceTree {
+  root: RefRoot
+  /** "input", or "$<node name>" for an ancestor. */
+  label: string
+  /** The node the data comes from. */
+  nodeId: string
+  nodeName: string
+  shape: Shape
+  source: 'run' | 'declared' | 'type'
+}
+
+/**
+ * The data a node can read in its expressions (docs/data-v1.md §6.1): its
+ * input (the previous node's output), then the output of every earlier
+ * ancestor, nearest first. Ancestors only: a node on another branch may not
+ * have run yet.
+ */
+export function availableData(
+  flow: Flow,
+  nodeId: string,
+  lastRun?: LastRun,
+): SourceTree[] {
+  const out: SourceTree[] = []
+  const seen = new Set<string>([nodeId])
+  let node = predecessor(flow, nodeId)
+  while (node && !seen.has(node.id)) {
+    seen.add(node.id)
+    const name = node.name || node.type
+    out.push({
+      root: out.length === 0 ? 'input' : { node: node.id },
+      label: out.length === 0 ? 'input' : `$${name}`,
+      nodeId: node.id,
+      nodeName: name,
+      ...outputOf(flow, node, lastRun, new Set()),
+    })
+    node = predecessor(flow, node.id)
+  }
+  return out
 }
 
 /** What a node outputs: from the last run, its declared schema, or its type. */

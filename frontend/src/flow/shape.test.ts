@@ -101,6 +101,23 @@ describe('schemas and shapes', () => {
     expect(schemaFromShape(inferShape({}))).toEqual({ type: 'object' })
   })
 
+  it('keeps required fields and integers from a declared schema', () => {
+    const declared = {
+      type: 'object' as const,
+      properties: {
+        id: { type: 'integer' as const },
+        name: { type: 'string' as const },
+      },
+      required: ['id'],
+    }
+    expect(schemaFromShape(shapeFromSchema(declared))).toEqual(declared)
+    const allOptional = {
+      type: 'object' as const,
+      properties: { a: { type: 'string' as const } },
+    }
+    expect(schemaFromShape(shapeFromSchema(allOptional))).toEqual(allOptional)
+  })
+
   it('turns a schema back into a shape', () => {
     expect(
       shapeFromSchema({
@@ -118,6 +135,7 @@ describe('schemas and shapes', () => {
         list: { type: 'array', items: { type: 'string' } },
         any: { type: 'array' },
       },
+      required: [],
     })
   })
 

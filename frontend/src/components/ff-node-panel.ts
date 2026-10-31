@@ -15,7 +15,7 @@ import {
   type StringMapProperty,
   type StringProperty,
 } from '../flow/node-types.ts'
-import type { DataView } from '../flow/data-view.ts'
+import type { DataView, SourceTree } from '../flow/data-view.ts'
 import {
   parseSchema,
   problemText,
@@ -37,6 +37,8 @@ import {
 import type { FlowNode } from '../flow/types.ts'
 import './ff-schema-editor.ts'
 import type { SchemaEdit } from './ff-schema-editor.ts'
+import './ff-mapper.ts'
+import type { MappingAdd, MappingSet } from './ff-mapper.ts'
 import './ff-data-view.ts'
 import type { InsertTarget } from './ff-data-view.ts'
 
@@ -282,6 +284,10 @@ export class FfNodePanel extends LitElement {
   @property({ attribute: false })
   outputData?: DataView
 
+  /** Data the node can read, for the visual mapper (Mapping tab). */
+  @property({ attribute: false })
+  sources: SourceTree[] = []
+
   /** Whether the flow can be run (passed on to the data view). */
   @property({ type: Boolean })
   canRun = false
@@ -339,8 +345,7 @@ export class FfNodePanel extends LitElement {
     const mode = spec ? activeMode(spec, node.config) : undefined
     if (this.view === 'output')
       return this.renderOutput(node, spec, mode, errors)
-    if (this.view === 'mapping')
-      return this.renderMappingView(node, spec, mode, errors)
+    if (this.view === 'mapping') return this.renderMappingView(node, spec, mode)
 
     // Panel and General: the form. In General, schema and mapping fields
     // live in the editor's Output and Mapping tabs instead.
@@ -492,13 +497,12 @@ export class FfNodePanel extends LitElement {
     node: FlowNode,
     spec: NodeTypeSpec | undefined,
     mode: ConfigMode | undefined,
-    errors: Record<string, string>,
   ) {
     const mappingProp = spec
-      ? Object.entries(spec.config.properties).find(
+      ? (Object.entries(spec.config.properties).find(
           ([key, prop]) =>
             prop.type === 'mapping' && (!mode || mode.keys.includes(key)),
-        )
+        ) as [string, MappingProperty] | undefined)
       : undefined
     if (!mappingProp) {
       return html`<div class="hint">
@@ -507,10 +511,49 @@ export class FfNodePanel extends LitElement {
       </div>`
     }
     const [key, prop] = mappingProp
-    return html`<div class="columns">
-      <div>${this.renderInputView()}</div>
-      <div>${this.renderField(key, prop, node.config[key], errors[key])}</div>
-    </div>`
+    const value = node.config[key]
+    const problems = mappingProblems(value ?? {}, node.config[prop.schemaKey])
+    return html`
+      ${prop.description ? html`<div class="hint">${prop.description}</div>` : nothing}
+      <ff-mapper
+        .sources=${this.sources}
+        .schema=${node.config[prop.schemaKey]}
+        .mapping=${mappingOf(value)}
+        @mapping-set=${(e: CustomEvent<MappingSet>) =>
+          this.setMapping(key, e.detail.path, e.detail.expression ?? '')}
+        @mapping-add=${(e: CustomEvent<MappingAdd>) =>
+          this.addMappedField(key, prop.schemaKey, e.detail)}
+      ></ff-mapper>
+      ${
+        problems.length
+          ? html`<ul class="error problems">
+              ${problems.map((p) => html`<li>${p}</li>`)}
+            </ul>`
+          : nothing
+      }
+    `
+  }
+
+  // addMappedField adds a dragged source as a new output field: typed from
+  // the source's shape and mapped to it (docs/data-v1.md §7.2).
+  private addMappedField(key: string, schemaKey: string, add: MappingAdd) {
+    const node = this.node
+    if (!node) return
+    const schema = mappingOf(node.config[schemaKey])
+    const properties = mappingOf(schema.properties)
+    let name = add.name
+    for (let n = 2; name in properties; n++) name = `${add.name}${n}`
+    this.emit({
+      config: {
+        ...node.config,
+        [schemaKey]: {
+          ...schema,
+          type: 'object',
+          properties: { ...properties, [name]: schemaFromShape(add.shape) },
+        },
+        [key]: { ...mappingOf(node.config[key]), [name]: add.expression },
+      },
+    })
   }
 
   // applySchemaEdit stores a tree-editor edit, carrying renames and removals

@@ -14,7 +14,7 @@ import {
 import { runFlow, type TraceEvent } from '../api/client.ts'
 import { TracePlayer, type Speed } from '../api/player.ts'
 import { runMarks } from '../api/trace.ts'
-import { dataView, outputView } from '../flow/data-view.ts'
+import { availableData, dataView, outputView } from '../flow/data-view.ts'
 import type { RunOutcome } from '../api/client.ts'
 import {
   FlowParseError,
@@ -422,6 +422,7 @@ export class FfApp extends LitElement {
       .node=${node}
       .dataView=${dataView(this.flow, node.id, this.lastRun)}
       .outputData=${outputView(this.flow, node.id, this.lastRun)}
+      .sources=${availableData(this.flow, node.id, this.lastRun)}
       ?canRun=${this.flow.nodes.some((n) => isTrigger(n.type))}
       @node-change=${(e: CustomEvent<NodeChange>) =>
         this.applyNodeChange(e.detail)}

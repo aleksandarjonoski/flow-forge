@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest'
 import hello from '../../../backend/examples/hello.flow.json'
 import type { TraceEvent } from '../api/client.ts'
 import { addEdge, removeEdge, setNodeConfig, setNodeName } from './edit.ts'
-import { dataView, outputView, sameUpstream } from './data-view.ts'
+import {
+  availableData,
+  dataView,
+  outputView,
+  sameUpstream,
+} from './data-view.ts'
 import { nodeType } from './node-types.ts'
 import type { Flow } from './types.ts'
 
@@ -174,6 +179,7 @@ describe('dataView with a declared schema', () => {
       shape: {
         type: 'object',
         fields: { name: { type: 'string' }, qty: { type: 'integer' } },
+        required: [],
       },
       source: 'declared',
     })
@@ -204,5 +210,21 @@ describe('outputView', () => {
       source: 'type',
     })
     expect(outputView(flow, 'nope')).toBeUndefined()
+  })
+})
+
+describe('availableData', () => {
+  it('lists the input, then earlier nodes nearest first', () => {
+    const trees = availableData(flow, 'node-3', lastRun)
+    expect(trees.map((t) => [t.label, t.root, t.nodeId, t.source])).toEqual([
+      ['input', 'input', 'node-2', 'run'],
+      ['$HTTP Trigger', { node: 'node-1' }, 'node-1', 'run'],
+    ])
+    expect(trees[1].shape).toMatchObject({ type: 'object' })
+  })
+
+  it('is empty for a trigger or an unconnected node', () => {
+    expect(availableData(flow, 'node-1')).toEqual([])
+    expect(availableData(removeEdge(flow, 'edge-1'), 'node-2')).toEqual([])
   })
 })

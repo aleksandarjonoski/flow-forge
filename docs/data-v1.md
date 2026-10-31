@@ -217,6 +217,11 @@ Details (slice 4):
 - **Click** a right field: edit its expression inline; clicking left fields inserts their paths at the cursor (as in the property panel today).
 - **Drop a left object onto empty space on the right**: adds a field of that shape to the schema and maps it — the fastest way to start.
 - Unmapped required fields are marked, matching the load-time check.
+- Fields inside an object that is mapped as a whole are shown as "comes with <field>" and cannot be mapped or dropped onto: their value comes from the whole-object mapping (§5).
+- Each source shows where its shape comes from: last run, declared schema, or node type. A source part whose type is unknown (`any`) can be mapped, but not dropped into the add zone, since its type would be a guess; the mapper says so.
+- A field added by dropping takes the source's name (`customer`, made unique if taken) and its shape as schema. Required fields and `integer` types are kept when the source shape comes from a declared schema; a shape seen in a test run marks every field required and types numbers as `number` (§7.3).
+- Clicking a source inserts its path into the output field focused last, at the cursor; with no field focused, the mapper asks to click one first.
+- Lines are recomputed whenever the mapping or the layout changes. A reference deeper than the known shape, or into an array at any index, is drawn to its nearest shown row (arrays show their items once, as `[0]`).
 
 ### 7.3 Schema editing
 Used for `parse_json`'s schema and the transform's output schema. Slice 2 ships the JSON view and both generators in the property panel; the tree editor comes with the node editor (slice 4). In the JSON view, text that does not parse yet keeps the last valid schema, and every schema problem is listed.

@@ -88,14 +88,14 @@ What FlowForge *can do* at each milestone. Each phase is a meaningful product st
 - Load existing flow JSON for editing.
 - Run a flow from the UI. Watch the trace events live.
 
-### Phase 2.5 — Data Contracts & Mapper (next)
+### Phase 2.5 — Data Contracts & Mapper ✅
 - Declared data shapes (schemas) so flows can rely on their data, and the editor can show it without a test run.
 - `parse_json` node: turns raw data into checked, typed data; triggers stay format-neutral.
 - Transform mapping mode with a TIBCO-style visual mapper: available data on the left, output structure on the right, lines between them.
 - A node editor with General / Input / Output tabs for every node.
 - Full design: [data-v1.md](data-v1.md).
 
-### Phase 3 — Server + Storage
+### Phase 3 — Server + Storage (next)
 - Persistent flow library in SQLite.
 - REST API: CRUD flows, start/stop a flow, list executions.
 - Multiple flows hosted by one server process.
@@ -384,7 +384,7 @@ Frontend lives in `frontend/` next to `backend/`. Same repo (monorepo decision d
 - **Replay** in the results panel plays the last run again from its recorded trace, without running the flow again.
 - Pausing, stepping and breakpoints (a real step-debugger) are Phase 7.
 
-### Phase 2.5 — Data Contracts & Mapper (next)
+### Phase 2.5 — Data Contracts & Mapper ✅
 Designed in [data-v1.md](data-v1.md); built in this order:
 
 | # | Slice | Notes | Status |
@@ -393,11 +393,11 @@ Designed in [data-v1.md](data-v1.md); built in this order:
 | 2 | `parse_json` node | 6th built-in node; schema config field with "Generate from sample / last run"; input data view shows declared schemas (§4, §7.3–7.4) | ✅ done |
 | 3 | Transform mapping mode | `schema` + `mapping` config, load-time checks, field-named errors (§5); mode switch and text mapping form in the panel | ✅ done |
 | 4 | Node editor | Wide overlay with General / Input / Output tabs for every node, Mapping tab for mapping transforms; schema tree editor with renames carried over to the mapping (§7.1, §7.3) | ✅ done |
-| 5 | Visual mapper | Mapping tab: available data ↔ output schema with solid/dashed lines, drag to map, inline expressions (§7.2) | next |
+| 5 | Visual mapper | Mapping tab: available data ↔ output schema with solid/dashed lines, drag to map, inline expressions, drop to add fields; input plus all earlier nodes on the left (§7.2) | ✅ done |
 
 **Phase 2.5 done when:** a webhook body can be parsed against a declared schema, mapped visually into a new shape in a transform, and every node after the parse shows the declared fields without a test run.
 
-### Phase 3 — Server + Storage
+### Phase 3 — Server + Storage (next)
 
 | # | Slice | Notes |
 |---|---|---|

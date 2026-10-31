@@ -12,6 +12,11 @@ export type Shape =
       fields?: Record<string, Shape>
       /** For maps with arbitrary keys (e.g. headers): the type of every value. */
       values?: Shape
+      /**
+       * Which fields are required, when known (from a declared schema).
+       * Unknown for shapes inferred from data.
+       */
+      required?: string[]
     }
   | { type: 'array'; items?: Shape }
   | {
@@ -120,7 +125,7 @@ export function shapeFromSchema(schema: Schema): Shape {
       for (const [k, v] of Object.entries(schema.properties ?? {})) {
         fields[k] = shapeFromSchema(v)
       }
-      return { type: 'object', fields }
+      return { type: 'object', fields, required: schema.required ?? [] }
     }
     case 'array':
       return schema.items
@@ -132,10 +137,11 @@ export function shapeFromSchema(schema: Schema): Shape {
 }
 
 /**
- * Generates a schema from a shape (inferred from a sample or a test run):
- * every field typed as seen and marked required, ready to be adjusted
- * (docs/data-v1.md §7.3). Numbers become "number", never "integer", since
- * one sample cannot show that a value is always whole.
+ * Generates a schema from a shape: every field typed as seen, ready to be
+ * adjusted (docs/data-v1.md §7.3). Required fields are kept when the shape
+ * knows them (it came from a declared schema); a shape inferred from a
+ * sample marks every field required. Inferred numbers become "number", never
+ * "integer", since one sample cannot show that a value is always whole.
  */
 export function schemaFromShape(shape: Shape): Schema {
   switch (shape.type) {
@@ -143,16 +149,19 @@ export function schemaFromShape(shape: Shape): Schema {
       const fields = Object.entries(shape.fields ?? {})
       const properties: Record<string, Schema> = {}
       for (const [k, v] of fields) properties[k] = schemaFromShape(v)
-      return fields.length
-        ? { type: 'object', properties, required: fields.map(([k]) => k) }
-        : { type: 'object' }
+      const required = shape.required ?? fields.map(([k]) => k)
+      if (!fields.length) return { type: 'object' }
+      return required.length
+        ? { type: 'object', properties, required }
+        : { type: 'object', properties }
     }
     case 'array':
       return shape.items
         ? { type: 'array', items: schemaFromShape(shape.items) }
         : { type: 'array' }
     case 'integer':
-      return { type: 'number' }
+      // Only declared schemas produce integer shapes; keep them.
+      return { type: 'integer' }
     case 'any':
       return { type: 'object' }
     default:
