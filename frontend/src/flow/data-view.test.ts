@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import hello from '../../../backend/examples/hello.flow.json'
 import type { TraceEvent } from '../api/client.ts'
 import { addEdge, removeEdge, setNodeConfig, setNodeName } from './edit.ts'
-import { dataView, sameUpstream } from './data-view.ts'
+import { dataView, outputView, sameUpstream } from './data-view.ts'
 import { nodeType } from './node-types.ts'
 import type { Flow } from './types.ts'
 
@@ -185,5 +185,24 @@ describe('dataView with a declared schema', () => {
       source: 'type',
       shape: { type: 'any' },
     })
+  })
+})
+
+describe('outputView', () => {
+  it('shows what a node outputs: run, then type', () => {
+    expect(outputView(flow, 'node-2', lastRun)).toEqual({
+      mode: 'output',
+      shape: {
+        type: 'object',
+        fields: { greeting: { type: 'string', sample: 'hello ada' } },
+      },
+      source: 'run',
+    })
+    expect(outputView(flow, 'node-2')).toEqual({
+      mode: 'output',
+      shape: { type: 'any', note: 'whatever the expression returns' },
+      source: 'type',
+    })
+    expect(outputView(flow, 'nope')).toBeUndefined()
   })
 })

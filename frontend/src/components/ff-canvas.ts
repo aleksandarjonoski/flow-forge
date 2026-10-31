@@ -40,6 +40,9 @@ const OUT = 'out'
 // How long a notice such as "would create a cycle" stays visible.
 const NOTICE_MS = 3000
 
+// Two picks of the same node within this time open it in the node editor.
+const DOUBLE_CLICK_MS = 400
+
 /** Drag-and-drop data type carrying a node type name from the palette. */
 export const NODE_TYPE_MIME = 'application/x-flowforge-node-type'
 
@@ -72,6 +75,7 @@ export interface NodeDrop {
  * @fires node-select - detail is the picked node's ID, or null when empty
  *   canvas is clicked
  * @fires node-drop - detail is a NodeDrop: a palette item was dropped here
+ * @fires node-open - detail is the ID of a double-clicked node
  *
  * The Rete area is created on first render and destroyed on disconnect, so
  * the element is not meant to be moved around the DOM.
@@ -232,6 +236,9 @@ export class FfCanvas extends LitElement {
   // mistaken for user edits.
   private drawing = false
 
+  // The last node pick, to detect double-clicks.
+  private lastPick?: { id: string; at: number }
+
   // Shared by every socket; all sockets are compatible.
   private readonly socket = new ClassicPreset.Socket('flow')
 
@@ -366,6 +373,7 @@ export class FfCanvas extends LitElement {
     area.addPipe((ctx) => {
       if (ctx.type === 'nodepicked') {
         this.emitSelect(ctx.data.id)
+        this.detectDoubleClick(ctx.data.id)
       } else if (
         ctx.type === 'pointerdown' &&
         ctx.data.event.target === area.container
@@ -415,6 +423,26 @@ export class FfCanvas extends LitElement {
         composed: true,
       }),
     )
+  }
+
+  // detectDoubleClick opens a node picked twice in quick succession. Picks
+  // are used rather than the browser's dblclick, because the first click
+  // re-renders the (now selected) node and the browser then never fires
+  // dblclick.
+  private detectDoubleClick(id: string) {
+    const now = Date.now()
+    const last = this.lastPick
+    this.lastPick = { id, at: now }
+    if (last?.id === id && now - last.at < DOUBLE_CLICK_MS) {
+      this.lastPick = undefined
+      this.dispatchEvent(
+        new CustomEvent('node-open', {
+          detail: id,
+          bubbles: true,
+          composed: true,
+        }),
+      )
+    }
   }
 
   private emitSelect(id: string | null) {
@@ -553,5 +581,6 @@ declare global {
     'flow-change': CustomEvent<Flow>
     'node-select': CustomEvent<string | null>
     'node-drop': CustomEvent<NodeDrop>
+    'node-open': CustomEvent<string>
   }
 }

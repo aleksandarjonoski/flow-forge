@@ -14,7 +14,7 @@ import {
 import { runFlow, type TraceEvent } from '../api/client.ts'
 import { TracePlayer, type Speed } from '../api/player.ts'
 import { runMarks } from '../api/trace.ts'
-import { dataView } from '../flow/data-view.ts'
+import { dataView, outputView } from '../flow/data-view.ts'
 import type { RunOutcome } from '../api/client.ts'
 import {
   FlowParseError,
@@ -28,6 +28,7 @@ import { DROP_OFFSET, type FfCanvas, type NodeDrop } from './ff-canvas.ts'
 import './ff-canvas.ts'
 import './ff-node-panel.ts'
 import type { NodeChange } from './ff-node-panel.ts'
+import './ff-node-editor.ts'
 import './ff-palette.ts'
 import type { FfRunDialog, RunRequest } from './ff-run-dialog.ts'
 import './ff-run-dialog.ts'
@@ -189,6 +190,10 @@ export class FfApp extends LitElement {
   @state()
   private docKey = 0
 
+  /** ID of the node open in the node editor, if any. */
+  @state()
+  private editing?: string
+
   /** ID of the selected node, if any. */
   @state()
   private selected?: string
@@ -335,6 +340,7 @@ export class FfApp extends LitElement {
               (this.selected = e.detail ?? undefined)}
             @node-drop=${(e: CustomEvent<NodeDrop>) =>
               this.addNodeAt(e.detail.type, e.detail.position)}
+            @node-open=${(e: CustomEvent<string>) => this.openEditor(e.detail)}
           ></ff-canvas>
           ${
             this.run
@@ -366,10 +372,13 @@ export class FfApp extends LitElement {
                 @node-delete=${(e: CustomEvent<string>) =>
                   this.deleteNode(e.detail)}
                 @close=${() => (this.selected = undefined)}
+                @node-open=${(e: CustomEvent<string>) =>
+                  this.openEditor(e.detail)}
               ></ff-node-panel>`
             : nothing
         }
       </div>
+      ${this.renderEditor()}
     `
   }
 
@@ -401,9 +410,33 @@ export class FfApp extends LitElement {
   private deleteNode(id: string) {
     this.flow = removeNode(this.flow, id)
     if (this.selected === id) this.selected = undefined
+    if (this.editing === id) this.editing = undefined
   }
 
-  // startRun sends the current flow for a test run and shows the outcome.
+  // renderEditor shows the node editor over everything while a node is
+  // being edited (docs/data-v1.md §7.1).
+  private renderEditor() {
+    const node = this.flow.nodes.find((n) => n.id === this.editing)
+    if (!node) return nothing
+    return html`<ff-node-editor
+      .node=${node}
+      .dataView=${dataView(this.flow, node.id, this.lastRun)}
+      .outputData=${outputView(this.flow, node.id, this.lastRun)}
+      ?canRun=${this.flow.nodes.some((n) => isTrigger(n.type))}
+      @node-change=${(e: CustomEvent<NodeChange>) =>
+        this.applyNodeChange(e.detail)}
+      @node-delete=${(e: CustomEvent<string>) => this.deleteNode(e.detail)}
+      @node-select=${(e: CustomEvent<string>) => this.openEditor(e.detail)}
+      @request-run=${() => this.runDialog.show()}
+      @close=${() => (this.editing = undefined)}
+    ></ff-node-editor>`
+  }
+
+  private openEditor(id: string) {
+    this.selected = id
+    this.editing = id
+  }
+
   // startRun sends the current flow for a test run. Its events go through
   // the player, so the run is shown at the chosen playback speed; the final
   // result is shown once playback has caught up.
@@ -507,6 +540,7 @@ export class FfApp extends LitElement {
     this.selected = undefined
     this.message = undefined
     this.closeRun()
+    this.editing = undefined
     this.docKey++
   }
 
@@ -557,7 +591,8 @@ export class FfApp extends LitElement {
 
   private onKeydown = (e: KeyboardEvent) => {
     if ((e.key === 'Delete' || e.key === 'Backspace') && !hasModifier(e)) {
-      if (this.selected && !isEditing(e)) {
+      // Inside the node editor, Delete never removes the node.
+      if (this.selected && !this.editing && !isEditing(e)) {
         e.preventDefault()
         this.deleteNode(this.selected)
       }

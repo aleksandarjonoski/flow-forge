@@ -132,20 +132,22 @@ export class FfDataView extends LitElement {
     const title =
       view.mode === 'emits'
         ? html`Emits`
-        : html`Input
-          ${
-            view.from
-              ? html`<span class="from"
-                  >← from
-                  <button
-                    class="link"
-                    @click=${() => this.fire('node-select', view.from!.id)}
-                  >
-                    ${view.from.name}
-                  </button></span
-                >`
-              : nothing
-          }`
+        : view.mode === 'output'
+          ? html`Output`
+          : html`Input
+            ${
+              view.from
+                ? html`<span class="from"
+                    >← from
+                    <button
+                      class="link"
+                      @click=${() => this.fire('node-select', view.from!.id)}
+                    >
+                      ${view.from.name}
+                    </button></span
+                  >`
+                : nothing
+            }`
     return html`
       <h3>${title}</h3>
       ${this.renderBody(view)}
@@ -162,10 +164,12 @@ export class FfDataView extends LitElement {
       view.source === 'run'
         ? 'From the last test run.'
         : view.source === 'declared'
-          ? `From the declared schema of ${view.from?.name ?? 'the previous node'}.`
-          : view.mode === 'emits'
-            ? 'From the trigger type.'
-            : "From the previous node's type."
+          ? view.mode === 'output'
+            ? 'From the declared schema.'
+            : `From the declared schema of ${view.from?.name ?? 'the previous node'}.`
+          : view.mode === 'input'
+            ? "From the previous node's type."
+            : "From the node's type."
     return html`
       <div class="source">
         ${source}

@@ -188,6 +188,13 @@ Every node keeps the narrow property panel for quick edits. **Double-clicking a 
 | **Output** | ✓ | What the node outputs: the type's contract (read-only), or the **declared schema** (editable) for `parse_json` and a mapping-mode transform. Plus the last run's real output when available. |
 | **Mapping** | transform (mapping mode) | The visual mapper (§7.2). |
 
+Details (slice 4):
+- Opening and closing: double-click a node, or **Open editor** in the property panel; **Esc** or **×** closes. The editor works on the same Flow as the canvas and panel: every edit is applied immediately, and the unsaved-changes marker and test runs behave as usual.
+- **General** shows the config fields except schemas and mappings, with the Input tree above for click-to-insert, and **Delete node**.
+- **Input** is the input data view at full size.
+- **Output** shows what the node outputs as a field tree — from the last run when it still applies, else the declared schema or the type's contract. For `parse_json` and a mapping-mode transform it also holds the schema editor (§7.3).
+- **Mapping** (mapping-mode transform): the Input tree on the left and the mapping rows on the right; clicking a field inserts its path into the focused row. Slice 5 adds the lines and dragging.
+
 ### 7.2 The visual mapper (transform, mapping mode)
 
 ```
@@ -213,10 +220,11 @@ Every node keeps the narrow property panel for quick edits. **Double-clicking a 
 
 ### 7.3 Schema editing
 Used for `parse_json`'s schema and the transform's output schema. Slice 2 ships the JSON view and both generators in the property panel; the tree editor comes with the node editor (slice 4). In the JSON view, text that does not parse yet keeps the last valid schema, and every schema problem is listed.
-- **Tree editor**: field name, type, required, `enum`, description; nested objects and arrays.
 - **Generate from sample**: paste example JSON; a schema is generated (every field typed from the sample, all fields required) and can then be adjusted. Numbers are generated as `number`, never `integer`: one sample cannot show that a value is always whole. A `null` in the sample becomes type `null`, to be corrected by hand.
 - **Generate from last run**: the same, from the real data the node received in the last test run, at its `from` path (which must hold an object). Replacing an existing schema asks first.
 - **JSON view**: the raw schema, for copy/paste. Edits there are applied when they parse and pass §3.
+- **Tree editor** (slice 4, in the Output tab): one row per field with name, type, required, description and — for string, number and integer fields — allowed values (`enum`, entered as a comma-separated list). Objects list their fields indented below, with **Add field**; arrays have an item type, and object items list their fields the same way. Changing a field's type drops settings that no longer apply. A name must be non-empty, without `.`, and unique among its siblings; an invalid name is refused and the old one kept.
+- **Renames and removals carry over to the mapping.** In a mapping-mode transform, renaming a field also renames the mapping keys at or below it, and removing a field removes them, so mappings do not silently break.
 
 ### 7.4 Data view everywhere
 The input data view (design.md) gains a third source: **declared**. A node after `parse_json` or a mapping transform shows the declared fields immediately, labelled "From the declared schema of *Parse Order*", without a test run. Order of preference: last run (when it still applies) → declared schema → type contract.

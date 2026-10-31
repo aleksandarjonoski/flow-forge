@@ -17,8 +17,11 @@ export interface LastRun {
 }
 
 export interface DataView {
-  /** "input" for actions; "emits" for triggers, which receive nothing. */
-  mode: 'input' | 'emits'
+  /**
+   * "input" for what an action receives; "emits" for triggers, which
+   * receive nothing; "output" for what any node outputs (Output tab).
+   */
+  mode: 'input' | 'emits' | 'output'
   /** The node the input comes from (input mode). */
   from?: { id: string; name: string }
   /** The data's shape; undefined when nothing is connected. */
@@ -44,6 +47,17 @@ export function dataView(
     from: { id: from.id, name: from.name || from.type },
     ...outputOf(flow, from, lastRun, new Set()),
   }
+}
+
+/** What a node outputs: from the last run, its declared schema, or its type. */
+export function outputView(
+  flow: Flow,
+  nodeId: string,
+  lastRun?: LastRun,
+): DataView | undefined {
+  const node = findNode(flow, nodeId)
+  if (!node) return undefined
+  return { mode: 'output', ...outputOf(flow, node, lastRun, new Set()) }
 }
 
 // outputOf returns what a node outputs: its real output in the last run, if

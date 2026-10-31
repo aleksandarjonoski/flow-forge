@@ -29,7 +29,14 @@ import {
   shapeAt,
   type PathSegment,
 } from '../flow/shape.ts'
+import {
+  mappingKey,
+  removeMappingKeys,
+  renameMappingKeys,
+} from '../flow/schema-edit.ts'
 import type { FlowNode } from '../flow/types.ts'
+import './ff-schema-editor.ts'
+import type { SchemaEdit } from './ff-schema-editor.ts'
 import './ff-data-view.ts'
 import type { InsertTarget } from './ff-data-view.ts'
 
@@ -51,6 +58,7 @@ export interface NodeChange {
  * @fires node-delete - detail is the node's ID; the user asked to delete it
  * @fires node-select - (from the data view) the node the input comes from
  * @fires request-run - (from the data view) run the flow to see real data
+ * @fires node-open - detail is the node's ID; open it in the node editor
  */
 @customElement('ff-node-panel')
 export class FfNodePanel extends LitElement {
@@ -60,6 +68,33 @@ export class FfNodePanel extends LitElement {
       padding: 1rem;
       overflow: auto;
       font-size: 0.875rem;
+    }
+
+    :host([view='general']),
+    :host([view='output']),
+    :host([view='mapping']) {
+      padding: 0;
+      overflow: visible;
+    }
+
+    .open-editor {
+      margin-bottom: 1rem;
+    }
+
+    .columns {
+      display: grid;
+      grid-template-columns: minmax(16rem, 2fr) 3fr;
+      gap: 1.5rem;
+      align-items: start;
+    }
+
+    .schema-section {
+      margin-bottom: 1.5rem;
+    }
+
+    h3 {
+      margin: 0 0 0.375rem;
+      font-size: 0.9375rem;
     }
 
     header {
@@ -232,9 +267,20 @@ export class FfNodePanel extends LitElement {
   @property({ attribute: false })
   node?: FlowNode
 
+  /**
+   * Which part to show: the whole side panel, or one tab of the node editor
+   * (docs/data-v1.md §7.1).
+   */
+  @property({ reflect: true })
+  view: 'panel' | 'general' | 'output' | 'mapping' = 'panel'
+
   /** What the node receives, shown above the config. */
   @property({ attribute: false })
   dataView?: DataView
+
+  /** What the node outputs (Output tab). */
+  @property({ attribute: false })
+  outputData?: DataView
 
   /** Whether the flow can be run (passed on to the data view). */
   @property({ type: Boolean })
@@ -290,34 +336,59 @@ export class FfNodePanel extends LitElement {
     if (!node) return nothing
     const spec = nodeType(node.type)
     const errors = spec ? validateNode(spec, node.config) : {}
-    const mode = spec && activeMode(spec, node.config)
+    const mode = spec ? activeMode(spec, node.config) : undefined
+    if (this.view === 'output')
+      return this.renderOutput(node, spec, mode, errors)
+    if (this.view === 'mapping')
+      return this.renderMappingView(node, spec, mode, errors)
+
+    // Panel and General: the form. In General, schema and mapping fields
+    // live in the editor's Output and Mapping tabs instead.
+    const inTabs = (prop: ConfigProperty) =>
+      this.view === 'general' &&
+      (prop.type === 'schema' || prop.type === 'mapping')
+    const fields = spec
+      ? Object.entries(spec.config.properties).filter(
+          ([key]) => !mode || mode.keys.includes(key),
+        )
+      : []
+    const moved = fields.filter(([, prop]) => inTabs(prop))
     return html`
-      <header>
-        <div>
-          <h2>${node.name || spec?.label || node.type}</h2>
-          ${spec ? html`<div class="muted">${spec.description}</div>` : nothing}
-        </div>
-        <button
-          class="close"
-          aria-label="Close"
-          @click=${() => this.dispatchEvent(new Event('close'))}
-        >
-          ×
-        </button>
-      </header>
+      ${
+        this.view === 'panel'
+          ? html`<header>
+              <div>
+                <h2>${node.name || spec?.label || node.type}</h2>
+                ${spec ? html`<div class="muted">${spec.description}</div>` : nothing}
+              </div>
+              <button
+                class="close"
+                aria-label="Close"
+                @click=${() => this.dispatchEvent(new Event('close'))}
+              >
+                ×
+              </button>
+            </header>`
+          : nothing
+      }
       <dl>
         <dt>ID</dt>
         <dd>${node.id}</dd>
         <dt>Type</dt>
         <dd>${node.type}</dd>
       </dl>
-      <ff-data-view
-        .view=${this.dataView}
-        .target=${this.dataView?.mode === 'input' ? this.insertTarget() : undefined}
-        ?canRun=${this.canRun}
-        @path-insert=${(e: CustomEvent<PathSegment[]>) =>
-          this.insertPath(e.detail)}
-      ></ff-data-view>
+      ${
+        this.view === 'panel'
+          ? html`<button
+              class="open-editor"
+              title="Open the wide editor with Input, Output and Mapping tabs (or double-click the node)"
+              @click=${() => this.fire('node-open', node.id)}
+            >
+              Open editor
+            </button>`
+          : nothing
+      }
+      ${this.renderInputView()}
       <div class="field">
         <label for="name">Name</label>
         <input
@@ -330,27 +401,149 @@ export class FfNodePanel extends LitElement {
       ${
         spec
           ? html`${mode ? this.renderModes(spec, mode) : nothing}
-            ${Object.entries(spec.config.properties)
-              .filter(([key]) => !mode || mode.keys.includes(key))
+            ${fields
+              .filter(([, prop]) => !inTabs(prop))
               .map(([key, prop]) =>
                 this.renderField(key, prop, node.config[key], errors[key]),
-              )}`
+              )}
+            ${
+              moved.length
+                ? html`<div class="hint">
+                    ${moved.map(([, p]) => p.title).join(' and ')}: see the
+                    ${
+                      moved.some(([, p]) => p.type === 'mapping')
+                        ? 'Output and Mapping tabs'
+                        : 'Output tab'
+                    }.
+                  </div>`
+                : nothing
+            }`
           : this.renderJSON()
       }
-      <button
-        class="delete"
-        @click=${() =>
-          this.dispatchEvent(
-            new CustomEvent('node-delete', {
-              detail: node.id,
-              bubbles: true,
-              composed: true,
-            }),
-          )}
-      >
+      <button class="delete" @click=${() => this.fire('node-delete', node.id)}>
         Delete node
       </button>
     `
+  }
+
+  // renderInputView is the Input box, with click-to-insert into the form.
+  private renderInputView() {
+    return html`<ff-data-view
+      .view=${this.dataView}
+      .target=${this.dataView?.mode === 'input' ? this.insertTarget() : undefined}
+      ?canRun=${this.canRun}
+      @path-insert=${(e: CustomEvent<PathSegment[]>) => this.insertPath(e.detail)}
+    ></ff-data-view>`
+  }
+
+  // renderOutput is the editor's Output tab: what the node outputs, and the
+  // schema editor for nodes that declare their output.
+  private renderOutput(
+    node: FlowNode,
+    spec: NodeTypeSpec | undefined,
+    mode: ConfigMode | undefined,
+    errors: Record<string, string>,
+  ) {
+    const schemaProps = spec
+      ? Object.entries(spec.config.properties).filter(
+          ([key, prop]) =>
+            prop.type === 'schema' && (!mode || mode.keys.includes(key)),
+        )
+      : []
+    if (!schemaProps.length) {
+      return html`<ff-data-view .view=${this.outputData}></ff-data-view> ${
+          spec?.modes
+            ? html`<div class="hint">
+                Switch to Mapping mode in the General tab to declare this
+                transform's output.
+              </div>`
+            : nothing
+        }`
+    }
+    return html`
+      ${
+        this.outputData?.source === 'run'
+          ? html`<ff-data-view .view=${this.outputData}></ff-data-view>`
+          : nothing
+      }
+      ${schemaProps.map(
+        ([key, prop]) => html`
+          <section class="schema-section">
+            <h3>${prop.title}</h3>
+            ${prop.description ? html`<div class="hint">${prop.description}</div>` : nothing}
+            <ff-schema-editor
+              .schema=${node.config[key]}
+              @schema-edit=${(e: CustomEvent<SchemaEdit>) =>
+                this.applySchemaEdit(spec!, key, e.detail)}
+            ></ff-schema-editor>
+          </section>
+          <section class="schema-section">
+            <h3>JSON and generators</h3>
+            ${this.renderField(key, { ...prop, description: undefined }, node.config[key], errors[key])}
+          </section>
+        `,
+      )}
+    `
+  }
+
+  // renderMappingView is the editor's Mapping tab: the Input tree beside the
+  // mapping rows (the visual mapper's lines come in slice 5).
+  private renderMappingView(
+    node: FlowNode,
+    spec: NodeTypeSpec | undefined,
+    mode: ConfigMode | undefined,
+    errors: Record<string, string>,
+  ) {
+    const mappingProp = spec
+      ? Object.entries(spec.config.properties).find(
+          ([key, prop]) =>
+            prop.type === 'mapping' && (!mode || mode.keys.includes(key)),
+        )
+      : undefined
+    if (!mappingProp) {
+      return html`<div class="hint">
+        This node has no mapping. Switch a transform to Mapping mode in the
+        General tab.
+      </div>`
+    }
+    const [key, prop] = mappingProp
+    return html`<div class="columns">
+      <div>${this.renderInputView()}</div>
+      <div>${this.renderField(key, prop, node.config[key], errors[key])}</div>
+    </div>`
+  }
+
+  // applySchemaEdit stores a tree-editor edit, carrying renames and removals
+  // over to mappings that use this schema (docs/data-v1.md §7.3).
+  private applySchemaEdit(spec: NodeTypeSpec, key: string, edit: SchemaEdit) {
+    const node = this.node
+    if (!node) return
+    const config: Record<string, unknown> = {
+      ...node.config,
+      [key]: edit.schema,
+    }
+    for (const [mKey, mProp] of Object.entries(spec.config.properties)) {
+      if (mProp.type !== 'mapping' || mProp.schemaKey !== key) continue
+      let mapping = mappingOf(config[mKey])
+      const from = edit.renamed && mappingKey(edit.renamed.from)
+      const to = edit.renamed && mappingKey(edit.renamed.to)
+      if (from && to) mapping = renameMappingKeys(mapping, from, to)
+      const removed = edit.removed && mappingKey(edit.removed)
+      if (removed) mapping = removeMappingKeys(mapping, removed)
+      if (mKey in config) config[mKey] = mapping
+    }
+    // The JSON view shows the new schema, not an older draft.
+    const drafts = new Map(this.schemaDrafts)
+    drafts.delete(key)
+    this.schemaDrafts = drafts
+    this.schemaJSONError = undefined
+    this.emit({ config })
+  }
+
+  private fire(name: string, detail: unknown) {
+    this.dispatchEvent(
+      new CustomEvent(name, { detail, bubbles: true, composed: true }),
+    )
   }
 
   private renderField(
