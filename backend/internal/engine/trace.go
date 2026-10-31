@@ -1,8 +1,10 @@
 package engine
 
 import (
+	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"os"
 	"sync"
 	"time"
@@ -128,4 +130,62 @@ func (m *MultiSink) Emit(e TraceEvent) {
 	for _, s := range m.sinks {
 		s.Emit(e)
 	}
+}
+
+// RunLogSink writes one log record per finished execution: INFO when it
+// completed, ERROR when it failed, with the execution ID, trigger, status,
+// duration and error, plus the attributes given at construction (e.g. the
+// flow ID). It is the technical log of every run, for log shippers; `log`
+// nodes remain for business messages. See docs/server-v1.md §5.3. Safe for
+// concurrent use.
+type RunLogSink struct {
+	logger *slog.Logger
+	attrs  []slog.Attr
+
+	mu sync.Mutex
+	// triggers maps a running execution to its trigger, which only the
+	// execution_started event names.
+	triggers map[string]string
+}
+
+// NewRunLogSink returns a sink that logs to logger, adding attrs to every
+// record.
+func NewRunLogSink(logger *slog.Logger, attrs ...slog.Attr) *RunLogSink {
+	return &RunLogSink{logger: logger, attrs: attrs, triggers: make(map[string]string)}
+}
+
+// Emit records the trigger of a starting execution and logs a finished one.
+func (s *RunLogSink) Emit(e TraceEvent) {
+	var level slog.Level
+	var status string
+	switch e.Kind {
+	case TraceExecutionStarted:
+		s.mu.Lock()
+		s.triggers[e.ExecutionID] = e.NodeID
+		s.mu.Unlock()
+		return
+	case TraceExecutionCompleted:
+		level, status = slog.LevelInfo, "completed"
+	case TraceExecutionFailed:
+		level, status = slog.LevelError, "failed"
+	default:
+		return
+	}
+	s.mu.Lock()
+	trigger := s.triggers[e.ExecutionID]
+	delete(s.triggers, e.ExecutionID)
+	s.mu.Unlock()
+
+	attrs := make([]slog.Attr, 0, len(s.attrs)+5)
+	attrs = append(attrs, s.attrs...)
+	attrs = append(attrs,
+		slog.String("execution", e.ExecutionID),
+		slog.String("trigger", trigger),
+		slog.String("status", status),
+		slog.Duration("duration", e.DurationNs),
+	)
+	if e.Err != "" {
+		attrs = append(attrs, slog.String("error", e.Err))
+	}
+	s.logger.LogAttrs(context.Background(), level, "execution", attrs...)
 }

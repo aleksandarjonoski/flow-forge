@@ -2,8 +2,9 @@
 // deployed flows. See docs/engine-v1.md §4.6, docs/api-v1.md and
 // docs/server-v1.md §10.
 //
-//	flowforge run [-addr :8080] <flow.json>
-//	flowforge serve [-addr 127.0.0.1:8090] [-flows-addr :8080] [-data dir] [-keep-executions 1000]
+//	flowforge run [-addr :8080] [-log-format text|json] <flow.json>
+//	flowforge serve [-addr 127.0.0.1:8090] [-flows-addr :8080] [-data dir]
+//	                [-keep-executions 1000] [-log-format text|json]
 package main
 
 import (
@@ -31,9 +32,10 @@ import (
 )
 
 const usage = `usage:
-  flowforge run [-addr :8080] <flow.json>
+  flowforge run [-addr :8080] [-log-format text|json] <flow.json>
       run a flow until interrupted
-  flowforge serve [-addr 127.0.0.1:8090] [-flows-addr :8080] [-data dir] [-keep-executions 1000]
+  flowforge serve [-addr 127.0.0.1:8090] [-flows-addr :8080] [-data dir]
+                  [-keep-executions 1000] [-log-format text|json]
       serve the editor API (local use only) and the deployed flows`
 
 // shutdownGrace is how long in-flight HTTP requests get on shutdown.
@@ -86,11 +88,13 @@ func parseFlags(fs *flag.FlagSet, args []string, nargs int, stderr io.Writer) in
 func runCmd(args []string, stderr io.Writer) int {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	addr := fs.String("addr", ":8080", "listen address for http_trigger nodes")
+	logFormat := fs.String("log-format", "text", "log format on stderr: text or json")
 	if code := parseFlags(fs, args, 1, stderr); code >= 0 {
 		return code
 	}
-
-	slog.SetDefault(slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	if code := setLogger(*logFormat, stderr); code >= 0 {
+		return code
+	}
 
 	cf, svc, err := load(fs.Arg(0))
 	if err != nil {
@@ -106,7 +110,11 @@ func runCmd(args []string, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	slog.Info("flowforge running", slog.String("flow", cf.Flow.ID), slog.String("addr", ln.Addr().String()))
-	if err := serve(ctx, cf, svc, ln, engine.NewStdoutTraceSink()); err != nil {
+	sink := engine.NewMultiSink(
+		engine.NewStdoutTraceSink(),
+		engine.NewRunLogSink(slog.Default(), slog.String("flow", cf.Flow.ID)),
+	)
+	if err := serve(ctx, cf, svc, ln, sink); err != nil {
 		fmt.Fprintf(stderr, "flowforge: %v\n", err)
 		return 1
 	}
@@ -122,11 +130,13 @@ func serveCmd(args []string, stderr io.Writer) int {
 	flowsAddr := fs.String("flows-addr", ":8080", "listen address for the deployed flows' http_trigger routes")
 	data := fs.String("data", "", "data directory (default $FLOWFORGE_DATA, else ~/.flowforge)")
 	keep := fs.Int("keep-executions", history.DefaultKeep, "executions kept per flow in the run history (0 keeps all)")
+	logFormat := fs.String("log-format", "text", "log format on stderr: text or json")
 	if code := parseFlags(fs, args, 0, stderr); code >= 0 {
 		return code
 	}
-
-	slog.SetDefault(slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	if code := setLogger(*logFormat, stderr); code >= 0 {
+		return code
+	}
 
 	dir, err := dataDir(*data)
 	if err != nil {
@@ -153,6 +163,23 @@ func serveCmd(args []string, stderr io.Writer) int {
 	}
 	slog.Info("flowforge stopped")
 	return 0
+}
+
+// setLogger makes the default slog logger write to stderr in format (text or
+// json), with every level enabled. It returns the exit code to stop with, or
+// -1 to continue.
+func setLogger(format string, stderr io.Writer) int {
+	opts := &slog.HandlerOptions{Level: slog.LevelDebug}
+	switch format {
+	case "text":
+		slog.SetDefault(slog.New(slog.NewTextHandler(stderr, opts)))
+	case "json":
+		slog.SetDefault(slog.New(slog.NewJSONHandler(stderr, opts)))
+	default:
+		fmt.Fprintf(stderr, "flowforge: -log-format must be text or json, not %q\n", format)
+		return 2
+	}
+	return -1
 }
 
 // dataDir resolves the data directory: the flag, else $FLOWFORGE_DATA, else
@@ -194,7 +221,12 @@ func runServer(ctx context.Context, cfg serverConfig, apiLn, flowsLn net.Listene
 
 	hist := history.New(st, history.Options{Keep: cfg.keep})
 	defer hist.Close() // after the flows stop: their last events are flushed
-	h := host.New(st, engine.DefaultRegistry, host.Options{Sink: hist.Sink})
+	h := host.New(st, engine.DefaultRegistry, host.Options{Sink: func(flowID string, revision int64) engine.TraceSink {
+		return engine.NewMultiSink(
+			hist.Sink(flowID, revision),
+			engine.NewRunLogSink(slog.Default(), slog.String("flow", flowID), slog.Int64("revision", revision)),
+		)
+	}})
 	res, err := h.Boot(ctx)
 	if err != nil {
 		apiLn.Close()

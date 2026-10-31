@@ -225,9 +225,10 @@ When a trigger calls `emit(payload)`:
 6. Emit trace events at every step (§8).
 
 ### 4.6 CLI
-`flowforge run [-addr :8080] <flow.json>`:
+`flowforge run [-addr :8080] [-log-format text|json] <flow.json>`:
 - Parses and compiles the flow against `DefaultRegistry` (all built-in nodes), serves `svc.HTTP` on `-addr`, and calls `engine.Run`.
-- Trace events go to **stdout** as JSON lines (`StdoutTraceSink`). `slog` output — including the `log` node — goes to **stderr** as text, with all levels enabled.
+- Trace events go to **stdout** as JSON lines (`StdoutTraceSink`). `slog` output — including the `log` node — goes to **stderr**, with all levels enabled; `-log-format text|json` picks the format (default `text`).
+- Every finished execution also writes one log line (`RunLogSink`, §8): `msg=execution flow=… execution=… trigger=… status=completed|failed duration=… [error=…]`, at INFO or ERROR.
 - `SIGINT` / `SIGTERM` shut down gracefully: the HTTP server stops accepting requests (5 s grace), then the engine stops.
 - Exit codes: `0` clean shutdown, `1` load/compile/runtime error, `2` usage error.
 
@@ -329,6 +330,7 @@ Provided sinks:
 - `StdoutTraceSink` — one JSON line per event. Default for the CLI.
 - `MemoryTraceSink` — ring buffer, useful in tests and for the future step-debugger.
 - `MultiSink(...)` — fan-out.
+- `RunLogSink` — one `slog` record per finished execution (INFO completed, ERROR failed) with execution ID, trigger, status, duration and error, plus attributes given by the caller (the flow ID; the server adds the revision). See [server-v1.md](server-v1.md) §5.3.
 
 Input/output payloads are recorded by reference in v1 (no deep copy). If a node mutates a map it received, the trace will reflect the mutated value. We accept this trade-off in v1 and revisit if it bites.
 

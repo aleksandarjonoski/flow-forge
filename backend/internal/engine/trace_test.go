@@ -3,6 +3,7 @@ package engine
 import (
 	"bytes"
 	"encoding/json"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -174,5 +175,44 @@ func TestMultiSink_PreservesOrder(t *testing.T) {
 		if e.Kind != want[i] {
 			t.Errorf("Events[%d].Kind = %v, want %v", i, e.Kind, want[i])
 		}
+	}
+}
+
+func TestRunLogSink(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	s := NewRunLogSink(logger, slog.String("flow", "orders"), slog.Int64("revision", 3))
+
+	s.Emit(TraceEvent{Kind: TraceExecutionStarted, ExecutionID: "ok", NodeID: "trig"})
+	s.Emit(TraceEvent{Kind: TraceExecutionStarted, ExecutionID: "bad", NodeID: "cron"})
+	s.Emit(TraceEvent{Kind: TraceNodeCompleted, ExecutionID: "ok", NodeID: "n"}) // not logged
+	s.Emit(TraceEvent{Kind: TraceExecutionCompleted, ExecutionID: "ok", DurationNs: 12 * time.Millisecond})
+	s.Emit(TraceEvent{Kind: TraceExecutionFailed, ExecutionID: "bad", DurationNs: 4 * time.Millisecond, Err: "node n (transform): boom"})
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("got %d records, want 2:\n%s", len(lines), buf.String())
+	}
+	var ok, bad map[string]any
+	json.Unmarshal([]byte(lines[0]), &ok)
+	json.Unmarshal([]byte(lines[1]), &bad)
+
+	want := map[string]any{
+		"level": "INFO", "msg": "execution", "flow": "orders", "revision": 3.0,
+		"execution": "ok", "trigger": "trig", "status": "completed", "duration": float64(12 * time.Millisecond),
+	}
+	for k, v := range want {
+		if ok[k] != v {
+			t.Errorf("completed record %s = %v, want %v", k, ok[k], v)
+		}
+	}
+	if _, has := ok["error"]; has {
+		t.Error("completed record has an error")
+	}
+	if bad["level"] != "ERROR" || bad["status"] != "failed" || bad["trigger"] != "cron" || bad["error"] != "node n (transform): boom" {
+		t.Errorf("failed record = %v", bad)
+	}
+	if len(s.triggers) != 0 {
+		t.Errorf("finished executions not forgotten: %v", s.triggers)
 	}
 }

@@ -208,7 +208,8 @@ level=INFO msg=execution flow=order-api revision=3 execution=af34… trigger=nod
 level=ERROR msg=execution flow=order-api revision=3 execution=b71c… trigger=node-1 status=failed duration=4ms error="node node-2 (transform): …"
 ```
 
-- `-log-format text|json` chooses the slog handler; `text` is the default (as today), `json` is for log shippers (Fluent Bit, Vector, Promtail → Loki, Elasticsearch, …).
+- `-log-format text|json` chooses the slog handler; `text` is the default (as today), `json` is for log shippers (Fluent Bit, Vector, Promtail → Loki, Elasticsearch, …). In JSON, `duration` is in nanoseconds (slog's encoding of a duration); text shows it as `12ms`.
+- `flowforge run` has no revision, so its line has no `revision` attribute.
 - Server and run logs go to **stderr**. `flowforge run` keeps writing trace events to **stdout**.
 - This is the technical log of every run, at no cost to flow authors. `log` nodes remain for business messages.
 

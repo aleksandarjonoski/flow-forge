@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -318,5 +319,29 @@ func TestDataDir(t *testing.T) {
 	home, _ := os.UserHomeDir()
 	if got, _ := dataDir(""); got != filepath.Join(home, ".flowforge") {
 		t.Errorf("default: %s", got)
+	}
+}
+
+func TestCLI_LogFormat(t *testing.T) {
+	for _, cmd := range []string{"run", "serve"} {
+		args := []string{cmd, "-log-format", "xml"}
+		if cmd == "run" {
+			args = append(args, helloFlow)
+		}
+		var stderr bytes.Buffer
+		if code := cli(args, &stderr); code != 2 || !strings.Contains(stderr.String(), "text or json") {
+			t.Errorf("%s: exit %d, stderr %q; want 2 and the allowed formats", cmd, code, stderr.String())
+		}
+	}
+
+	defer slog.SetDefault(slog.Default())
+	var buf bytes.Buffer
+	if code := setLogger("json", &buf); code != -1 {
+		t.Fatalf("setLogger(json) = %d", code)
+	}
+	slog.Info("hello", slog.String("k", "v"))
+	var rec map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil || rec["msg"] != "hello" || rec["k"] != "v" {
+		t.Errorf("json log = %q (%v)", buf.String(), err)
 	}
 }
