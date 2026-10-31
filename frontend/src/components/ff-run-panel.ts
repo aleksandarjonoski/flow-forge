@@ -19,9 +19,10 @@ export type RunState =
   | { phase: 'done'; outcome: RunOutcome }
 
 /**
- * Results of a test run: overall status, then one row per node that ran with
- * its duration and output (or error). Rows appear while the run streams in.
- * See "Test runs" and "Live execution view" in docs/design.md.
+ * Results of a run — a test run, or a recorded execution of a deployed flow
+ * (docs/server-v1.md §7.3): overall status, then one row per node that ran
+ * with its duration and output (or error). Rows appear while the run streams
+ * in. See "Test runs" and "Live execution view" in docs/design.md.
  *
  * @fires close - the user closed the panel
  * @fires node-select - detail is the ID of the node whose row was clicked
@@ -133,6 +134,13 @@ export class FfRunPanel extends LitElement {
       font-size: 0.8125rem;
     }
 
+    .note {
+      margin: 0 0 0.5rem;
+      padding: 0.25rem 0.5rem;
+      border-left: 3px solid #c80;
+      background: color-mix(in srgb, #c80 10%, transparent);
+    }
+
     ul {
       margin: 0.25rem 0 0;
       padding-left: 1.25rem;
@@ -151,12 +159,20 @@ export class FfRunPanel extends LitElement {
   @property({ attribute: false })
   speed: Speed = 'normal'
 
+  /** The panel's heading: a test run, a deploy, or a recorded execution. */
+  @property()
+  heading = 'Test run'
+
+  /** Notes shown above the results, e.g. that the canvas differs. */
+  @property({ attribute: false })
+  notes: string[] = []
+
   render() {
     const state = this.run
     if (!state) return nothing
     return html`
       <header>
-        <h2>Test run</h2>
+        <h2>${this.heading}</h2>
         <div class="summary" role="status">${this.renderSummary(state)}</div>
         <div class="controls">
           <label for="speed">Playback</label>
@@ -200,6 +216,7 @@ export class FfRunPanel extends LitElement {
           ×
         </button>
       </header>
+      ${this.notes.map((n) => html`<p class="note">${n}</p>`)}
       ${
         state.phase === 'done'
           ? this.renderBody(state.outcome)
@@ -214,9 +231,8 @@ export class FfRunPanel extends LitElement {
     }
     const { outcome } = state
     if (!outcome.ok) {
-      return html`<span class="bad"
-        >Could not run: ${outcome.error.error}</span
-      >`
+      const what = this.heading === 'Deploy' ? 'Not deployed' : 'Could not run'
+      return html`<span class="bad">${what}: ${outcome.error.error}</span>`
     }
     const { result } = outcome
     const took = formatDuration(executionDurationNs(result.trace))

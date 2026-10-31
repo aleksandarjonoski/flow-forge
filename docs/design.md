@@ -409,8 +409,10 @@ Designed in [server-v1.md](server-v1.md); built in this order:
 | 3 | Flow API | `GET/POST/PUT/DELETE /api/flows…`, `start` / `stop`, `GET /api/health`; `flowforge serve` gains `-data` and `-flows-addr`, with separate editor and flows listeners. | ✅ done |
 | 4 | Run history | History sink with a batched writer (bounded queue, node events dropped under load, payloads over 64 KiB truncated); `GET /api/executions` paginated and `GET /api/executions/{id}` with the trace. | ✅ done |
 | 5 | Run logs | One `slog` line per finished execution in `serve` and `run`; `-log-format text|json` for log shippers. | ✅ done |
-| 6 | Editor flow library | Flows list with state badges, Save / Deploy / Stop, `409` reload-or-overwrite, file import/export, History tab that replays a recorded run on the canvas. | |
+| 6 | Editor flow library | Flows list with state badges, Save / Deploy / Stop, `409` reload-or-overwrite, file import/export, History tab that replays a recorded run on the canvas. | ✅ done |
 | 7 | One binary | `frontend/dist` embedded with `go:embed` (placeholder when not built), root `Makefile`, `time/tzdata`, `CGO_ENABLED=0` builds for Linux, macOS and Windows. | |
+
+**Editor flow library** (set in slice 6): the editor rules are in [server-v1.md](server-v1.md) §7 — the Nodes / Flows tabs, Save / Deploy / Stop / History in the header, the message bar's choices for conflicts and imports, and the Results / History bottom panel. "Opening and saving files" (Phase 2) still holds for files, except that Save now stores on the server and Download exports a file.
 
 **Phase 3 done when:** on a machine with nothing installed, copying the `flowforge` binary and running `flowforge serve` gives an editor at `http://127.0.0.1:8090`; a flow built there can be deployed, called on `:8080`, and its executions opened in History; after restarting the server, the flow is running again.
 

@@ -291,32 +291,42 @@ The editor's API, on the editor listener. Phase 2's rules carry over ([api-v1.md
 
 ## 7. Editor
 
-The editor gains a server-backed **flow library**. It still works without a server for files (Open/Download), as in Phase 2.
+The editor gains a server-backed **flow library**. It still works without a server for files (Open file… / Download), as in Phase 2.
 
 ### 7.1 Flow library
 
-- A **Flows** list (a panel on the left, switchable with the palette) shows every stored flow: name, ID, state badge (running / stopped / failed), and "not deployed" when the running revision is older. Clicking a flow opens it, asking first if the open flow has unsaved changes.
-- **New** creates the flow on the server at its first Save.
-- The URL follows the open flow (`#/flows/order-api`), so a flow can be bookmarked and the page reload reopens it.
-- If the API is unreachable, the list says to start `flowforge serve` and the editor works with files only.
+- The left column has two tabs: **Nodes** (the palette) and **Flows**. Flows lists every stored flow: name, ID, state badge (running / stopped / failed, with the reason as a tooltip), and "changes not deployed" when the running revision is older than the saved one. It is refreshed when shown, after every save/deploy/stop, and every 5 seconds while shown.
+- Clicking a flow opens it, asking first if the open flow has unsaved changes. Each row has a **×** that deletes the flow and its run history, after a confirmation. Deleting the open flow keeps it in the editor as an unsaved flow that is no longer stored.
+- The editor still starts with the hello example, not stored. **New** starts a flow that is not stored either; its first Save creates it on the server. The header says "not stored" for such a flow.
+- The URL follows the open stored flow (`#/flows/order-api`), so a flow can be bookmarked and a page reload reopens it. Editing the hash opens that flow.
+- If the API is unreachable, the list says to start `flowforge serve`, and files can still be opened and downloaded.
 
 ### 7.2 Header actions
 
 | Action | Does |
 |---|---|
-| **Save** (Ctrl/⌘+S) | Saves to the server (create or `PUT`). A `409` asks *Reload theirs / Overwrite*. |
-| **Deploy** | Save, then start (§4.4). Compile problems are shown as for a test run. |
-| **Stop** | Stop the flow. Shown while it runs. |
+| **Save** (Ctrl/⌘+S) | Saves to the server: create the first time, then `PUT` at the loaded revision. A flow with changes gets a new `metadata.updatedAt`. Edits made while the request is out stay unsaved. |
+| **Deploy** | Save if needed, then start (§4.4). Compile problems are shown in the results panel, headed *Deploy*. A start failure (e.g. a route taken) is shown in the message bar. |
+| **Stop** | Stop the flow. Shown while it is running or failed. |
+| **History** | Opens the History tab of the bottom panel. Enabled for stored flows. |
 | **Run…** | Test run, unchanged. |
-| **Open file… / Download** | Import a local `.json` file (it becomes a new unsaved flow unless its ID exists on the server, in which case the user chooses *open as a copy with a new ID* or *replace the stored one*) and export the canonical file. |
+| **Open file…** (Ctrl/⌘+O) | Import a local `.json` file as an unsaved flow. If its ID is already stored, the message bar offers *Open as a copy* (a free ID, `<id>-copy`, `<id>-copy-2`, …) or *Replace the stored one* (it becomes the stored flow's unsaved content; Save overwrites). |
+| **Download** | Export the editor's flow as a canonical file. It does not count as saving. |
 
-The header shows the state badge next to the flow name, and "Changes not deployed" when the saved revision is ahead of the running one.
+The header shows the state badge next to the flow name, and "changes not deployed" when the saved revision is ahead of the running one.
+
+**The message bar** shows errors (red) and choices (blue) with buttons:
+- A save refused with `409` (someone else saved): *Reload theirs* or *Overwrite with mine* (save again at their revision).
+- A first save whose ID is already stored: *Open the stored one* or *Save mine as a copy*.
+- An unreachable backend on Save: use Download to keep the flow as a file.
+
+The editor never takes a newer revision from the library list: the revision stays the one it loaded or saved, so the lost-update guard holds.
 
 ### 7.3 Run history
 
-- A **History** tab in the bottom panel lists the open flow's recent executions: time, trigger, status, duration, revision. It is refreshed every 5 seconds while visible.
-- Clicking an execution loads its trace into the results panel and plays it back on the canvas, exactly like a test run (playback speed and Replay included). If its revision is older than the open document, a note says the canvas may differ from what ran.
-- "Trace incomplete" and `interrupted` executions are marked as such.
+- The bottom panel has two tabs, **Results** and **History**. History lists the open flow's executions, newest first: start time, status, duration, trigger, revision and error, with *Load more* for older pages. It is refreshed every 5 seconds while shown.
+- Clicking an execution loads its trace into Results and plays it back on the canvas, exactly like a test run (playback speed and Replay included); the heading is *Run of <start time>*. A note says when the run used another revision than the one open, or when the canvas has unsaved changes, since the canvas may then differ from what ran.
+- "Trace incomplete" and `interrupted` executions are marked as such; an interrupted one shows as failed with the reason. Durations come from stored times with millisecond precision; shorter runs show "< 1 ms".
 
 ---
 
