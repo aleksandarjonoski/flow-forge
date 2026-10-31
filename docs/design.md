@@ -405,7 +405,7 @@ Designed in [server-v1.md](server-v1.md); built in this order:
 | # | Slice | Description | Status |
 |---|---|---|---|
 | 1 | Store | `internal/store`: SQLite via pure-Go `modernc.org/sqlite`, a lock file so one server owns the data directory, embedded migrations versioned with `user_version`, flows stored verbatim with revisions and a lost-update guard, executions + trace events, retention. | ✅ done |
-| 2 | Flow host | `engine.Start` / `Instance.Stop`; `internal/host` runs one engine instance per flow on a shared trigger mux that names the flow owning a route, per-flow cron, states (stopped / running / failed), autostart on boot, `interrupted` marking after a crash. | |
+| 2 | Flow host | `engine.Start` / `Instance.Stop`; `internal/host` runs one engine instance per flow on a shared trigger mux that names the flow owning a route, per-flow cron, states (stopped / running / failed), autostart on boot, `interrupted` marking after a crash. | ✅ done |
 | 3 | Flow API | `GET/POST/PUT/DELETE /api/flows…`, `start` / `stop`, `GET /api/health`; `flowforge serve` gains `-data` and `-flows-addr`, with separate editor and flows listeners. | |
 | 4 | Run history | History sink with a batched writer (bounded queue, node events dropped under load, payloads over 64 KiB truncated); `GET /api/executions` paginated and `GET /api/executions/{id}` with the trace. | |
 | 5 | Run logs | One `slog` line per finished execution in `serve` and `run`; `-log-format text|json` for log shippers. | |

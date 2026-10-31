@@ -99,3 +99,41 @@ func TestHTTPMux_Remove(t *testing.T) {
 		t.Errorf("re-Handle after Remove: %v", err)
 	}
 }
+
+func TestHTTPMux_Owners(t *testing.T) {
+	root := NewHTTPMux()
+	a := root.Owned("flow-a")
+	b := root.Owned("flow-b")
+	if err := a.Handle("POST", "/orders", okHandler("a")); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	// Another owner is told who holds the route.
+	err := b.Handle("post", "/orders", okHandler("b"))
+	if err == nil || err.Error() != "route POST /orders is used by flow flow-a" {
+		t.Errorf("clash err = %v, want it to name flow-a", err)
+	}
+	// The same owner twice is a plain duplicate.
+	err = a.Handle("POST", "/orders", okHandler("a"))
+	if err == nil || err.Error() != "route POST /orders is already registered" {
+		t.Errorf("duplicate err = %v", err)
+	}
+
+	// Every view serves every route.
+	if rec := serve(b, "POST", "/orders"); rec.Body.String() != "a" {
+		t.Errorf("served %q via another view, want a's handler", rec.Body.String())
+	}
+
+	// Only the owner removes its route.
+	b.Remove("POST", "/orders")
+	if rec := serve(root, "POST", "/orders"); rec.Code != http.StatusOK {
+		t.Errorf("after another owner's Remove: status = %d, want 200", rec.Code)
+	}
+	a.Remove("POST", "/orders")
+	if rec := serve(root, "POST", "/orders"); rec.Code != http.StatusNotFound {
+		t.Errorf("after the owner's Remove: status = %d, want 404", rec.Code)
+	}
+	if err := b.Handle("POST", "/orders", okHandler("b")); err != nil {
+		t.Errorf("Handle after the owner left: %v", err)
+	}
+}

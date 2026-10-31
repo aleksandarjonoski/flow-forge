@@ -19,6 +19,29 @@ var ErrEngineStopped = errors.New("engine stopped")
 // passed to Compile. Run starts and stops svc.Cron but does not serve
 // svc.HTTP — the caller mounts it in an http.Server.
 func Run(ctx context.Context, cf *CompiledFlow, svc *EngineServices, sink TraceSink) error {
+	inst, err := Start(cf, svc, sink)
+	if err != nil {
+		return err
+	}
+	<-ctx.Done()
+	return inst.Stop()
+}
+
+// Instance is a running flow, returned by Start.
+type Instance struct {
+	r        *runner
+	cancel   context.CancelFunc
+	stopOnce sync.Once
+	stopErr  error
+}
+
+// Start starts every trigger of cf and the scheduler, and returns once they
+// are all started. If a trigger fails to start, the ones already started are
+// stopped and the error is returned. It is Run without the wait, for callers
+// that run many flows and must know whether each one started
+// (docs/engine-v1.md §4.4).
+func Start(cf *CompiledFlow, svc *EngineServices, sink TraceSink) (*Instance, error) {
+	ctx, cancel := context.WithCancel(context.Background())
 	r := &runner{exec: NewExecutor(cf, sink), ctx: ctx}
 
 	for _, id := range cf.Triggers {
@@ -26,10 +49,12 @@ func Run(ctx context.Context, cf *CompiledFlow, svc *EngineServices, sink TraceS
 		if !ok {
 			// Compile guarantees every trigger ID is a TriggerNode; this is a
 			// defensive backstop.
-			return errors.Join(fmt.Errorf("node %s is not a TriggerNode", id), r.shutdown())
+			cancel()
+			return nil, errors.Join(fmt.Errorf("node %s is not a TriggerNode", id), r.shutdown())
 		}
 		if err := trig.Start(ctx, r.emitter(id)); err != nil {
-			return errors.Join(fmt.Errorf("start trigger %s (%s): %w", id, trig.Type(), err), r.shutdown())
+			cancel()
+			return nil, errors.Join(fmt.Errorf("start trigger %s (%s): %w", id, trig.Type(), err), r.shutdown())
 		}
 		r.started = append(r.started, startedTrigger{id: id, node: trig})
 	}
@@ -38,12 +63,22 @@ func Run(ctx context.Context, cf *CompiledFlow, svc *EngineServices, sink TraceS
 		svc.Cron.Start()
 		r.cron = svc
 	}
-
-	<-ctx.Done()
-	return r.shutdown()
+	return &Instance{r: r, cancel: cancel}, nil
 }
 
-// runner holds the state of one Run call.
+// Stop shuts the instance down: in-flight executions are cancelled (they
+// abort between nodes), the scheduler and triggers are stopped, and Stop
+// waits for the executions to end. It returns the joined trigger Stop
+// errors. Calling it again returns the same result.
+func (i *Instance) Stop() error {
+	i.stopOnce.Do(func() {
+		i.cancel()
+		i.stopErr = i.r.shutdown()
+	})
+	return i.stopErr
+}
+
+// runner holds the state of one running flow.
 type runner struct {
 	exec    *Executor
 	ctx     context.Context

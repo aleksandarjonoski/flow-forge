@@ -242,3 +242,61 @@ func TestRun_StartsCronScheduler(t *testing.T) {
 		t.Errorf("Run = %v, want nil", err)
 	}
 }
+
+func TestStart_ReturnsOnceStarted(t *testing.T) {
+	trig := newCtlTrigger("ctl")
+	act := &spyAction{fakeNode: fakeNode{typeName: "act"}, exec: returns(nil)}
+	reg := NewRegistry()
+	reg.Register("ctl", func() Node { return trig })
+	reg.Register("act", spyFactory(act))
+	f := &flow.Flow{
+		Nodes: []flow.Node{{ID: "t", Type: "ctl"}, {ID: "a", Type: "act"}},
+		Edges: []flow.Edge{{Source: "t", Target: "a"}},
+	}
+	svc := NewEngineServices()
+	cf, err := Compile(f, reg, svc)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+
+	inst, err := Start(cf, svc, nil)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// The trigger is already started when Start returns.
+	emit := receive(t, trig.emits, "trigger Start")
+	if err := emit(nil); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	waitFor(t, "execution", func() bool { return act.callCount() == 1 })
+
+	if err := inst.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if err := emit(nil); !errors.Is(err, ErrEngineStopped) {
+		t.Errorf("emit after Stop = %v, want ErrEngineStopped", err)
+	}
+	// Stop again: same result, triggers not stopped twice.
+	if err := inst.Stop(); err != nil {
+		t.Errorf("second Stop: %v", err)
+	}
+	if n := trig.stops.Load(); n != 1 {
+		t.Errorf("trigger stopped %d times, want 1", n)
+	}
+}
+
+func TestStart_FailureReturnsError(t *testing.T) {
+	bad := newCtlTrigger("bad")
+	bad.startErr = errors.New("route taken")
+	reg := NewRegistry()
+	reg.Register("bad", func() Node { return bad })
+	svc := NewEngineServices()
+	cf, err := Compile(&flow.Flow{Nodes: []flow.Node{{ID: "t", Type: "bad"}}}, reg, svc)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	inst, err := Start(cf, svc, nil)
+	if inst != nil || err == nil || !strings.Contains(err.Error(), "start trigger t (bad): route taken") {
+		t.Errorf("Start = %v, %v; want nil and the start error", inst, err)
+	}
+}

@@ -209,6 +209,12 @@ type CompiledFlow struct {
 
 `svc` must be the same services passed to `Compile`. `Run` does not listen on a port: the caller mounts `svc.HTTP` in an `http.Server` (§4.6).
 
+`Run` is built from two halves, for callers that run many flows and must know whether each one started (the server, [server-v1.md](server-v1.md) §4.2):
+- `engine.Start(cf, svc, sink) (*Instance, error)` does steps 1–4 and returns once every trigger is started, or with the first start error after stopping the ones already started.
+- `Instance.Stop() error` does step 5: it cancels the instance's context (in-flight executions abort between nodes), stops the scheduler and the triggers, waits for the executions, and returns the joined `Stop()` errors. Calling it again returns the same result.
+
+`Run` is `Start`, then wait for `ctx`, then `Stop`.
+
 ### 4.5 Execute (per event)
 When a trigger calls `emit(payload)`:
 1. Create a fresh `ExecutionContext`.
@@ -438,6 +444,8 @@ type Node interface {
 (Yes, this is a refinement of §3.2. I'm leaving §3.2 minimal so the *concept* is clear, and adding the services parameter here where the rationale is.)
 
 `HTTPMux` is a plain `http.Handler` keyed by exact method + path. Unlike `http.ServeMux` it supports removing routes, which `Stop` needs. A request to an unknown path gets `404`; a known path with the wrong method gets `405` with an `Allow` header. Registering the same method + path twice is an error. The mux does not listen itself: whoever runs the engine (the CLI, slice 10) mounts it in an `http.Server` on the configured address.
+
+A server running many flows shares one route table between them. `mux.Owned(flowID)` returns a view of the mux that registers routes as that flow's: a clash with another flow's route names it (`route POST /orders is used by flow order-api`), and `Remove` only removes the view's own routes. Serving any view serves every route.
 
 The cron scheduler works the same way: nodes only add and remove jobs, and whoever runs the engine calls `Cron.Start()` / `Cron.Stop()`.
 
