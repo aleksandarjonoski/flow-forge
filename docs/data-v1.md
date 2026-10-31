@@ -15,7 +15,7 @@ This is the contract for this feature. If something here is wrong, change the do
 - **Format-neutral triggers.** A trigger only receives data. Turning raw data into checked, typed data is a separate, explicit step: a *parse* node. `parse_json` is the first; XML, CSV, form data can follow with the same pattern.
 - **Visual mapping**, in the spirit of TIBCO BusinessWorks: available data on the left, the target structure on the right, lines between them. First for the transform node.
 - **Every node shows its data**: what comes in and what goes out, in Input and Output tabs.
-- Groundwork for code generation (design.md Phase 6): declared schemas can become Go types.
+- Groundwork for contracts between flows (design.md Phase 5): a callable flow's input and output are declared schemas.
 
 ### Non-Goals (this version)
 - Mapping into the inputs of *every* node (TIBCO's "Activity Input"). Sketched in §9, built later.

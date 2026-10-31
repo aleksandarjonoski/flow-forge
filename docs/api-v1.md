@@ -3,7 +3,7 @@
 Status: **Draft** (Phase 2)
 Audience: implementers of the backend API and the frontend client.
 
-This is the contract between the visual editor (Layer 1) and the backend (Layer 2, see [design.md](design.md) §5). If something here is wrong, change the doc first, then the code. Phase 3 adds flow storage and start/stop; Phase 2 only needs test runs.
+This is the contract between the visual editor (Layer 1) and the backend (Layer 2, see [design.md](design.md) §5). If something here is wrong, change the doc first, then the code. Phase 2 only needs test runs. Phase 3 adds the flow library, deploy/stop and run history, designed in [server-v1.md](server-v1.md) §6; those endpoints move into this document as they are built.
 
 ## Serving
 

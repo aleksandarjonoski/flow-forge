@@ -12,7 +12,7 @@ FlowForge is a **Go-native visual integration platform**.
 
 A developer designs an integration as a graph of nodes (HTTP, queues, databases, transformations, AI calls, …) in a browser-based visual editor. The graph is stored as a JSON document — the *Flow*. A Go runtime loads the Flow and executes it.
 
-Eventually, the same Flow can also be **compiled to a standalone Go binary**: a small, self-contained microservice that ships in a Docker image, runs on goroutines, and has no FlowForge dependency at runtime.
+The main way to run flows is a **FlowForge server**: one static binary, copied onto a machine, that hosts the editor and any number of deployed flows. Optionally, flows can also be **packed into a standalone binary**: a small, self-contained microservice (the engine plus the embedded flows) that ships in a Docker image and needs no FlowForge server.
 
 ### The angle
 
@@ -46,11 +46,11 @@ The integration / iPaaS market has well-known shapes:
 3. **Runtime is fast and tiny.** A FlowForge process should comfortably handle thousands of events per second on a single core, with sub-100MB RAM at idle.
 4. **Self-hostable in one binary.** No Postgres, no Redis, no Kubernetes required to get started. SQLite is the default.
 5. **Plugin-extensible from day one.** New node types ship as Go packages, not core changes.
-6. **A flow can become a standalone Go service.** This is the long-term differentiator (Phase 6).
+6. **A flow can become a standalone Go service** — a binary with the engine and the flow embedded (Phase 8).
 
 ### Engineering goals
 
-1. **JSON is the source of truth.** UI, runtime, codegen, and CLI all consume the same Flow JSON.
+1. **JSON is the source of truth.** UI, runtime, standalone binaries, and CLI all consume the same Flow JSON.
 2. **Every execution is traceable.** Every node start/finish emits a structured event. Debugging is a first-class feature, not retrofitted.
 3. **No surprises.** Validation rejects ambiguous flows (e.g., multi-inbound edges without defined merge semantics) instead of inventing implicit behavior.
 4. **Each implementation slice is independently testable.** No big-bang integrations.
@@ -96,44 +96,46 @@ What FlowForge *can do* at each milestone. Each phase is a meaningful product st
 - Full design: [data-v1.md](data-v1.md).
 
 ### Phase 3 — Server + Storage (next)
-- Persistent flow library in SQLite.
-- REST API: CRUD flows, start/stop a flow, list executions.
-- Multiple flows hosted by one server process.
-- Execution log persisted, searchable from the UI.
+- **Install once, deploy many flows:** `flowforge serve` is one static binary that hosts the editor, the API and any number of running flows.
+- Flow library in SQLite (pure Go, no database server). Deploy and stop flows from the editor; deployed flows start again with the server.
+- Run history: every execution of a deployed flow is recorded with its trace and can be replayed in the editor.
+- One structured log line per execution, for standard log shippers.
+- Full design: [server-v1.md](server-v1.md).
 
-### Phase 4 — Plugin Maturation
-- Connector node types: Kafka, RabbitMQ, Postgres, Redis, S3, SFTP, SMTP/IMAP.
-- Plugin SDK + docs for third-party authors.
-- Per-node timeouts and retry policy in config.
-- Configurable concurrency per node.
+### Phase 4 — Production Basics
+- What a flow needs to be a real microservice: token auth for the API, request/response HTTP (return the flow's result, status codes, headers), path parameters, config and secrets from the environment, error handling (error edges), per-node timeouts and retries, health endpoints.
 
-### Phase 5 — Advanced Execution
+### Phase 5 — Messaging & Composition
+- In-memory pub/sub between flows (`publish` + `topic_trigger`) behind a small broker interface; NATS (embedded or external) as the second backend.
+- Sub-flows: a callable flow with an input/output contract, `call_flow` with a fixed target, then dynamic targets restricted to flows that implement a declared contract.
+
+### Phase 6 — Connectors & Plugin SDK
+- The node catalog served by the backend; a stable node interface and SDK docs for third-party nodes.
+- Connectors: Postgres, Redis, Kafka (via the pure-Go `franz-go` client), RabbitMQ, S3, SFTP, SMTP/IMAP.
+
+### Phase 7 — Advanced Execution
 - Merge nodes with explicit semantics (zip / wait-all / first-wins).
-- Error edges → run a handler subgraph on failure.
+- Loops over arrays (split / aggregate).
 - Parallel fan-out within a single execution.
-- Sub-flows (a node references another flow).
-- Streaming triggers (Kafka consumer emits continuously).
-- Hot reload of edited flows without process restart.
+- Streaming triggers (a Kafka consumer emits continuously).
+- Hot reload: redeploy a flow without dropping requests.
 
-### Phase 6 — Code Generation (the unique angle)
-- "Generate Go Project" → a standalone module that compiles to a binary.
-- Generated code is readable, idiomatic Go that uses goroutines and channels.
-- Re-import edited generated code back into the visual editor.
-- Docker image build target.
+### Phase 8 — Standalone Binaries
+- `flowforge build` packs the engine and one or many flows into one binary, e.g. grouped by domain like a BW application. Same engine, same expressions, so behaviour is identical to the server.
+- Docker image target; the same cross-compile targets as the server.
 
-### Phase 7 — Observability
+### Phase 9 — Observability
 - Web dashboard: list of flows, last N executions, error rate, latency.
-- Prometheus metrics endpoint.
-- Trace events streamed to the UI via websocket (real-time step debugger).
-- Replay an execution from its trace.
+- Prometheus metrics endpoint, OpenTelemetry traces.
+- Run history pushed live to the UI; a real step debugger (pause, step, breakpoints).
 
-### Phase 8 — Enterprise / Scale
-- Auth + RBAC (who can edit / run / view which flows).
+### Phase 10 — Enterprise / Scale
+- OIDC login + RBAC (who can edit / run / view which flows).
 - Versioning + Git integration (flows live in a Git repo).
 - Cluster runtime: multiple FlowForge processes share triggers and load.
 - AI nodes as a first-class category (LLM call, embedding, vector search).
 
-The phases are mostly sequential but not strict — Phase 4 (more connectors) can ship piecewise alongside Phase 5 (advanced execution).
+The phases are mostly sequential but not strict — connectors (Phase 6) can ship piecewise alongside the phases before and after them.
 
 ---
 
@@ -182,9 +184,9 @@ Five layers, top to bottom:
 ### Layer 2 — Server (Phase 3+)
 
 - **Tech**: Go `net/http` + a thin router. No heavy framework.
-- **Owns**: REST endpoints for flow CRUD, start/stop, execution log, trace streaming (websocket). Contract: [api-v1.md](api-v1.md) (Phase 2 has only test runs).
+- **Owns**: REST endpoints for flow CRUD, deploy/stop, run history, test runs. Contract: [api-v1.md](api-v1.md); the Phase 3 design is [server-v1.md](server-v1.md).
 - **Persists**: flows + execution history in SQLite.
-- **Hosts**: the engine. In single-process deployment, server and engine live in one binary.
+- **Hosts**: the engine, one instance per running flow, and the embedded editor. Server and engine live in one binary.
 
 In Phase 1, this layer is absent — the CLI runs the engine directly against a JSON file.
 
@@ -203,7 +205,7 @@ In Phase 1, this layer is absent — the CLI runs the engine directly against a 
 
 ### Layer 5 — Storage & External Integrations
 
-- **Flow library**: SQLite, single file. Default location: `~/.flowforge/flows.db`.
+- **Flow library**: SQLite, single file, pure-Go driver. Default location: `~/.flowforge/flowforge.db`.
 - **Execution history**: same SQLite database, separate table.
 - **External systems**: every connection (HTTP, DB, Kafka, …) lives behind a node implementation. The engine itself never touches the network.
 
@@ -242,7 +244,7 @@ The schema will evolve. Version bumps follow semver: breaking changes go to 2.0,
 The commitments that distinguish FlowForge from "yet another workflow tool."
 
 ### 7.1 JSON is the source of truth
-Every artifact derives from the Flow JSON. The visual editor *renders* it; the runtime *executes* it; the future codegen *compiles* it. Nothing is hidden in a database row that isn't in the JSON.
+Every artifact derives from the Flow JSON. The visual editor *renders* it; the runtime *executes* it; a standalone binary *embeds* it. Nothing that defines what a flow does is hidden in a database row: the server stores the document verbatim and adds only deployment state (revision, deployed or not).
 
 ### 7.2 Git-friendly by construction
 JSON formatting is stable (key order preserved, 2-space indent). Two semantically-equal flows produce identical text. Diffs are reviewable.
@@ -259,8 +261,8 @@ Every observable step emits a structured trace event. The UI step-debugger and t
 ### 7.6 Boring tech in the runtime
 Go stdlib first. Minimal dependencies. The runtime is the hot path; it must be predictable. (The frontend is allowed more dependency latitude — it's the cold path.)
 
-### 7.7 The unique angle: compile to native
-Long-term, a Flow is a *specification* that can be either *interpreted* (FlowForge runtime) or *compiled* (standalone Go binary). This dual-mode is the moat. Phase 6.
+### 7.7 One runtime, two ways to ship
+A Flow runs on the same engine everywhere: hosted by a FlowForge server, or packed with the engine into a standalone binary (Phase 8). Flows are never translated to Go source — expressions always run on the embedded expr-lang — so a flow behaves the same in both, and there is one runtime to maintain, not two.
 
 ---
 
@@ -334,7 +336,7 @@ Frontend lives in `frontend/` next to `backend/`. Same repo (monorepo decision d
 - Adding and deleting nodes are later slices (palette, slice 7).
 
 **Node type catalog and property panel** (set in slice 5):
-- `src/flow/node-types.ts` describes each built-in node type: label, kind (trigger or action), a one-line description, and a **config schema**. The schema is a small subset of JSON Schema, so the backend can later serve the same documents from its node registry (`GET /node-types`, Phase 3) and the frontend copy goes away. Until then, the catalog must be kept in step with engine-v1.md §11 by hand.
+- `src/flow/node-types.ts` describes each built-in node type: label, kind (trigger or action), a one-line description, and a **config schema**. The schema is a small subset of JSON Schema, so the backend can later serve the same documents from its node registry (`GET /node-types`, Phase 6) and the frontend copy goes away. Until then, the catalog must be kept in step with engine-v1.md §11 by hand.
 - Supported schema subset: an `object` whose `properties` are either
   - `string` — with optional `title`, `description`, `default`, `enum`, `pattern`, `format: "uri"`, and `x-multiline: true` (renders a text area, used for expressions and templates), or
   - `object` with `additionalProperties: { "type": "string" }` — a key/value list, used for HTTP headers.
@@ -382,7 +384,7 @@ Frontend lives in `frontend/` next to `backend/`. Same repo (monorepo decision d
 - Clicking a row in the results panel selects that node on the canvas, so its config is at hand while reading its output.
 - **Playback speed.** Most runs finish in milliseconds, too fast to follow. So the editor *plays back* the trace at a readable pace instead of showing it as it arrives: each node stays "running" for a moment, then gets its mark, then the next node starts. Only the display is slowed — the backend runs at full speed, and the durations shown are the real ones. Speeds: **Real time** (no delay), **Normal** (≈0.6 s per node, the default) and **Slow** (≈1.5 s per node), chosen in the results panel and remembered in the browser. A run that is slower than the playback pace is shown as its events arrive. Switching to Real time during playback jumps to the end.
 - **Replay** in the results panel plays the last run again from its recorded trace, without running the flow again.
-- Pausing, stepping and breakpoints (a real step-debugger) are Phase 7.
+- Pausing, stepping and breakpoints (a real step-debugger) are Phase 9.
 
 ### Phase 2.5 — Data Contracts & Mapper ✅
 Designed in [data-v1.md](data-v1.md); built in this order:
@@ -398,62 +400,78 @@ Designed in [data-v1.md](data-v1.md); built in this order:
 **Phase 2.5 done when:** a webhook body can be parsed against a declared schema, mapped visually into a new shape in a transform, and every node after the parse shows the declared fields without a test run.
 
 ### Phase 3 — Server + Storage (next)
+Designed in [server-v1.md](server-v1.md); built in this order:
+
+| # | Slice | Description | Status |
+|---|---|---|---|
+| 1 | Store | `internal/store`: SQLite via pure-Go `modernc.org/sqlite`, a lock file so one server owns the data directory, embedded migrations versioned with `user_version`, flows stored verbatim with revisions and a lost-update guard, executions + trace events, retention. | |
+| 2 | Flow host | `engine.Start` / `Instance.Stop`; `internal/host` runs one engine instance per flow on a shared trigger mux that names the flow owning a route, per-flow cron, states (stopped / running / failed), autostart on boot, `interrupted` marking after a crash. | |
+| 3 | Flow API | `GET/POST/PUT/DELETE /api/flows…`, `start` / `stop`, `GET /api/health`; `flowforge serve` gains `-data` and `-flows-addr`, with separate editor and flows listeners. | |
+| 4 | Run history | History sink with a batched writer (bounded queue, node events dropped under load, payloads over 64 KiB truncated); `GET /api/executions` paginated and `GET /api/executions/{id}` with the trace. | |
+| 5 | Run logs | One `slog` line per finished execution in `serve` and `run`; `-log-format text|json` for log shippers. | |
+| 6 | Editor flow library | Flows list with state badges, Save / Deploy / Stop, `409` reload-or-overwrite, file import/export, History tab that replays a recorded run on the canvas. | |
+| 7 | One binary | `frontend/dist` embedded with `go:embed` (placeholder when not built), root `Makefile`, `time/tzdata`, `CGO_ENABLED=0` builds for Linux, macOS and Windows. | |
+
+**Phase 3 done when:** on a machine with nothing installed, copying the `flowforge` binary and running `flowforge serve` gives an editor at `http://127.0.0.1:8090`; a flow built there can be deployed, called on `:8080`, and its executions opened in History; after restarting the server, the flow is running again.
+
+### Phase 4 — Production Basics
+Slices are planned when Phase 3 is done; the scope:
+- **API token auth** — a static token (`-api-token` / env) required on the editor listener, so the editor can be used on a remote server without an SSH tunnel.
+- **Request/response HTTP** — return the flow's result to the caller, with status code and headers chosen by the flow (today `http_trigger` always answers `202`).
+- **Path parameters** — `/orders/{id}` routes in `http_trigger`.
+- **Config and secrets from the environment** — per-environment values (URLs, passwords) kept out of the flow file.
+- **Error handling** — error edges (`edge.type: "error"`) route a failure to a handler subgraph, e.g. to build an error response.
+- **Per-node timeouts and retries** — engine-enforced, with backoff.
+- **Health endpoints** for load balancers and Kubernetes.
+
+### Phase 5 — Messaging & Composition
+- **Broker interface + in-memory pub/sub** — `Publish(topic, msg)` / `Subscribe(topic)` owned by the engine; `publish` action and `topic_trigger`; fan-out to every subscriber; per-topic policy when a subscriber is slow (wait or drop with a counted warning); the subscriber's run carries the publisher's correlation ID.
+- **Sub-flows** — a callable flow declares an input/output contract (a `flow_trigger`); `call_flow` runs it in-process with a fixed target, its run nested in the caller's trace; call-depth limit and cycle detection.
+- **Dynamic sub-flows** — `call_flow` with a target computed at runtime, allowed only among flows that implement a declared contract, so mapping and validation still work.
+- **NATS backend** — the same broker interface on NATS (embedded, or an external cluster), with JetStream for persistence.
+
+### Phase 6 — Connectors & Plugin SDK
 
 | # | Slice | Notes |
 |---|---|---|
-| 1 | SQLite layer (`backend/internal/store/`) | Schema: `flows`, `executions`, `trace_events` |
-| 2 | REST API: `GET/PUT/POST/DELETE /flows` | Standard CRUD |
-| 3 | Multi-flow engine (engine manages N concurrent flows) | Each flow has its own trigger set |
-| 4 | `POST /flows/{id}/start`, `/stop` | Lifecycle control |
-| 5 | `GET /executions?flow_id=…` | Paginated history |
-| 6 | Migrations system | `golang-migrate` or homegrown — decide later |
-| 7 | Frontend: flow list, save/load against server | |
+| 1 | Node catalog served by the backend (`GET /api/node-types`) | The frontend copy of the catalog goes away |
+| 2 | Plugin SDK doc + example | Stable node interface; a `flowforge-plugin-example` repo |
+| 3 | Connectors: Postgres, Redis | First two non-trivial nodes |
+| 4 | Connectors: Kafka producer + consumer | Pure-Go `franz-go` client (no CGO); the consumer trigger is the hard part |
+| 5 | Connectors: RabbitMQ, SFTP, SMTP/IMAP, S3 | Pure I/O nodes |
 
-### Phase 4 — Plugins
-
-| # | Slice | Notes |
-|---|---|---|
-| 1 | Plugin SDK doc + example | A `flowforge-plugin-example` repo |
-| 2 | Per-node timeouts in config | Engine-level enforcement |
-| 3 | Per-node retry policy | Configurable backoff |
-| 4 | Connectors: Postgres, Redis | First two non-trivial nodes |
-| 5 | Connectors: Kafka producer + consumer | Streaming trigger is the hard part |
-| 6 | Connectors: SFTP, SMTP/IMAP, S3 | Pure I/O nodes |
-
-### Phase 5 — Advanced Execution
+### Phase 7 — Advanced Execution
 
 | # | Slice | Notes |
 |---|---|---|
 | 1 | Merge node semantics (zip / wait-all / first-wins) | Validator stops rejecting multi-inbound |
-| 2 | Error edges in schema (`edge.type: "error"`) | Engine routes errors to handler subgraph |
+| 2 | Loops over arrays (split / aggregate) | Also unlocks repeating mappings (data-v1.md §6.3) |
 | 3 | Parallel fan-out within an execution | True concurrent node execution |
-| 4 | Sub-flows (`type: "subflow"`) | A node that runs another flow |
-| 5 | Streaming triggers (multiple emits per "event") | Kafka consumer benefits most |
-| 6 | Hot reload (watch flow files, recompile in place) | |
+| 4 | Streaming triggers (multiple emits per "event") | Kafka consumer benefits most |
+| 5 | Hot reload | Redeploy without the gap where requests get `404` |
 
-### Phase 6 — Code Generation
+### Phase 8 — Standalone Binaries
+"Approach A": the binary is the normal engine with flows embedded; flows are never translated to Go source.
 
 | # | Slice | Notes |
 |---|---|---|
-| 1 | Codegen package: Flow → Go source AST | Generate readable code |
-| 2 | Generated project layout: `go.mod`, `main.go`, runtime stubs | |
-| 3 | "Generate" CLI: `flowforge gen flow.json --out ./service` | |
-| 4 | Dockerfile generation | |
-| 5 | Re-import: parse generated Go back into a Flow | The truly unique feature |
-| 6 | Compatibility tests: generated binary matches interpreted behavior | |
+| 1 | `flowforge build <flow.json…> -o service` | Engine + embedded flows (`go:embed`); one or many flows per binary |
+| 2 | Cross-compile targets | Same five targets as the server |
+| 3 | Docker image target | `FROM scratch` + the binary |
+| 4 | Compatibility tests | The binary and the server give identical traces for the same flow and input |
 
-### Phase 7 — Observability
+### Phase 9 — Observability
 
-- Trace sink → websocket → live UI
-- Prometheus metrics endpoint
+- Prometheus metrics endpoint; OpenTelemetry traces with the correlation ID
 - Per-flow dashboard (executions, error rate, latency)
-- Execution replay
+- Run history pushed live to the editor (SSE)
+- Step debugger: pause, step, breakpoints
 
-### Phase 8 — Enterprise / Scale
+### Phase 10 — Enterprise / Scale
 
-- Auth (OIDC + local users)
+- OIDC login + local users
 - RBAC (flow-level permissions)
-- Git-backed flow library
+- Git-backed flow library, flow versioning and history
 - Cluster runtime (Raft or external coordinator — decide later)
 - AI node category
 
@@ -470,20 +488,23 @@ flow-forge/
 ├── docs/
 │   ├── design.md            ← this document
 │   ├── engine-v1.md         ← engine implementation contract
-│   ├── schema-v1.md         ← (future) formal JSON schema spec
+│   ├── api-v1.md            ← editor ↔ backend API
+│   ├── data-v1.md           ← schemas, parse_json, mapper
+│   ├── server-v1.md         ← server, storage, run history
 │   └── plugin-sdk.md        ← (future) plugin author guide
 │
 ├── backend/
 │   ├── cmd/
-│   │   ├── flowforge/       ← run-a-flow CLI
-│   │   └── flowforge-gen/   ← (Phase 6) codegen CLI
+│   │   └── flowforge/       ← CLI: run, serve, (Phase 8) build
 │   ├── internal/
-│   │   ├── flow/            ← schema + parser + validator
+│   │   ├── flow/            ← schema + parser
 │   │   ├── engine/          ← executor + registry + trace + topo
 │   │   ├── nodes/           ← built-in node implementations
-│   │   ├── server/          ← (Phase 3) HTTP API + websocket
+│   │   ├── schema/          ← data schema subset
+│   │   ├── api/             ← HTTP API
+│   │   ├── host/            ← (Phase 3) running flows
 │   │   ├── store/           ← (Phase 3) SQLite persistence
-│   │   └── codegen/         ← (Phase 6) Flow → Go source
+│   │   └── webui/           ← (Phase 3) embedded editor
 │   ├── examples/
 │   │   └── hello.flow.json
 │   └── go.mod
@@ -499,7 +520,7 @@ flow-forge/
 │   ├── vite.config.ts
 │   └── package.json
 │
-└── plugins/                 ← (Phase 4+) optional plugins, separate modules
+└── plugins/                 ← (Phase 6+) optional plugins, separate modules
     ├── kafka/
     ├── postgres/
     └── ...
@@ -511,12 +532,12 @@ flow-forge/
 
 Decisions deferred until the relevant phase forces them:
 
-1. **Graph library for the frontend** — React Flow (embed as web component) vs Drawflow vs custom SVG. Spike during Phase 2 slice 2.
-2. **Auth model** — defer to Phase 8. Until then, single-user, no auth.
-3. **Multi-tenant model** — out of scope for self-hosted v1. Revisit if SaaS emerges.
-4. **Flow versioning** — Phase 3 starts with "latest only." Versioning + history is Phase 8.
-5. **Cluster runtime coordination** — Raft (embedded), etcd (external), or Postgres advisory locks? Decide in Phase 8.
-6. **Codegen target depth** — does the generated code preserve plugin loading, or inline only what's used? Phase 6 design decision.
+1. ~~**Graph library for the frontend**~~ — decided: Rete.js v2 ([ADR 0001](adr/0001-graph-library.md)).
+2. **Auth model** — a static API token in Phase 4; OIDC + RBAC in Phase 10. Until Phase 4, single-user, no auth, editor on loopback.
+3. **Multi-tenant model** — out of scope for self-hosted v1. Revisit if a hosted offering emerges.
+4. **Flow versioning** — Phase 3 keeps the latest document only, with a revision number. Versioning + history is Phase 10.
+5. **Cluster runtime coordination** — Raft (embedded), etcd (external), or Postgres advisory locks? Decide in Phase 10.
+6. **Standalone binary contents** — does `flowforge build` link every built-in node, or only the types the flows use? Phase 8 design decision.
 7. **Schema v2 trigger** — first feature that forces a breaking schema change defines v2. Likely candidates: explicit ports, edge types, subflows.
 
 ---
@@ -530,9 +551,9 @@ The things most likely to derail the project, with how we plan to address them.
 | Visual editor UX takes longer than the entire backend | Use an existing graph library. No custom canvas. |
 | Schema rewrites cascade through every layer | JSON schema is locked at 1.0 until end of Phase 3. Force-fit features into the existing shape. |
 | Plugin API breaks on every release | Keep the `Node` / `ActionNode` / `TriggerNode` interfaces tiny and stable. Plugin SDK = those three interfaces + the registry. |
-| Codegen complexity grows without bound | Start with a code generator that handles only the built-in nodes. Plugin codegen is opt-in via plugin SDK additions. |
-| Self-hosted ops burden scares users away | Single-binary, single-file SQLite, sensible defaults. No required external services until Phase 8. |
-| Feature requests pull us toward Node-RED / n8n parity | Refuse. The wedge is Go-native + compile-to-binary. Catalog breadth is not the goal. |
+| Two runtimes drift apart (server vs standalone binary) | There is only one: standalone binaries embed the same engine (§7.7). No code generation. |
+| Self-hosted ops burden scares users away | Single-binary, single-file SQLite, sensible defaults. No required external services until Phase 10. |
+| Feature requests pull us toward Node-RED / n8n parity | Refuse. The wedge is Go-native, typed, single-binary integration. Catalog breadth is not the goal. |
 
 ---
 
