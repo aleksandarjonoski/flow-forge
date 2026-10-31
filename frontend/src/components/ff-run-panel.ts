@@ -1,6 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { customElement, property } from 'lit/decorators.js'
 import type { RunOutcome, TraceEvent } from '../api/client.ts'
+import { SPEEDS, type Speed } from '../api/player.ts'
 import {
   executionDurationNs,
   formatDuration,
@@ -14,7 +15,7 @@ import type { Flow } from '../flow/types.ts'
  * ended.
  */
 export type RunState =
-  | { phase: 'running'; trace: TraceEvent[] }
+  | { phase: 'running'; trace: TraceEvent[]; replay?: boolean }
   | { phase: 'done'; outcome: RunOutcome }
 
 /**
@@ -24,6 +25,8 @@ export type RunState =
  *
  * @fires close - the user closed the panel
  * @fires node-select - detail is the ID of the node whose row was clicked
+ * @fires speed-change - detail is the chosen playback Speed
+ * @fires replay - the user asked to play the last run again
  */
 @customElement('ff-run-panel')
 export class FfRunPanel extends LitElement {
@@ -61,6 +64,18 @@ export class FfRunPanel extends LitElement {
 
     .muted {
       opacity: 0.7;
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .controls select,
+    .controls button {
+      font: inherit;
+      font-size: 0.8125rem;
     }
 
     .close {
@@ -132,6 +147,10 @@ export class FfRunPanel extends LitElement {
   @property({ attribute: false })
   run?: RunState
 
+  /** The playback speed (docs/design.md, "Live execution view"). */
+  @property({ attribute: false })
+  speed: Speed = 'normal'
+
   render() {
     const state = this.run
     if (!state) return nothing
@@ -139,6 +158,40 @@ export class FfRunPanel extends LitElement {
       <header>
         <h2>Test run</h2>
         <div class="summary" role="status">${this.renderSummary(state)}</div>
+        <div class="controls">
+          <label for="speed">Playback</label>
+          <select
+            id="speed"
+            title="Slows down only the display; durations are real"
+            .value=${this.speed}
+            @change=${(e: Event) =>
+              this.dispatchEvent(
+                new CustomEvent('speed-change', {
+                  detail: (e.target as HTMLSelectElement).value as Speed,
+                }),
+              )}
+          >
+            ${SPEEDS.map(
+              (s) =>
+                html`<option
+                  value=${s.value}
+                  ?selected=${s.value === this.speed}
+                >
+                  ${s.label}
+                </option>`,
+            )}
+          </select>
+          ${
+            state.phase === 'done' && state.outcome.ok
+              ? html`<button
+                  title="Play this run again without running the flow"
+                  @click=${() => this.dispatchEvent(new Event('replay'))}
+                >
+                  Replay
+                </button>`
+              : nothing
+          }
+        </div>
         <button
           class="close"
           aria-label="Close results"
@@ -156,7 +209,9 @@ export class FfRunPanel extends LitElement {
   }
 
   private renderSummary(state: RunState) {
-    if (state.phase === 'running') return html`Running…`
+    if (state.phase === 'running') {
+      return state.replay ? html`Replaying…` : html`Running…`
+    }
     const { outcome } = state
     if (!outcome.ok) {
       return html`<span class="bad"

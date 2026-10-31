@@ -12,7 +12,9 @@ import {
   withEdgeIds,
 } from '../flow/edit.ts'
 import { runFlow, type TraceEvent } from '../api/client.ts'
+import { TracePlayer, type Speed } from '../api/player.ts'
 import { runMarks } from '../api/trace.ts'
+import type { RunOutcome } from '../api/client.ts'
 import {
   FlowParseError,
   defaultFileName,
@@ -34,6 +36,23 @@ import './ff-run-panel.ts'
 // The editor opens with the hello example; New starts an empty flow.
 const initialFileName = 'hello.flow.json'
 const initialFlow = withEdgeIds(parseFlow(helloText))
+
+// Where the playback speed is remembered. Defined before the class: <ff-app>
+// is already in the page, so the element is constructed as soon as the class
+// is defined, before the rest of this module runs.
+const SPEED_KEY = 'flowforge.playbackSpeed'
+
+function loadSpeed(): Speed {
+  try {
+    const saved = localStorage.getItem(SPEED_KEY)
+    if (saved === 'realtime' || saved === 'normal' || saved === 'slow') {
+      return saved
+    }
+  } catch {
+    // Storage unavailable: use the default.
+  }
+  return 'normal'
+}
 
 // Clicking a palette item repeatedly would stack nodes exactly on top of
 // each other; each further one is shifted by this much.
@@ -185,6 +204,13 @@ export class FfApp extends LitElement {
   // result of a later one.
   private runSeq = 0
 
+  /** How fast runs are played back on screen. Remembered in the browser. */
+  @state()
+  private speed: Speed = loadSpeed()
+
+  // Paces the display of the current run or replay.
+  private player?: TracePlayer
+
   @query('input[type=file]')
   private fileInput!: HTMLInputElement
 
@@ -314,7 +340,11 @@ export class FfApp extends LitElement {
               ? html`<ff-run-panel
                   .run=${this.run.state}
                   .flow=${this.run.flow}
-                  @close=${() => (this.run = undefined)}
+                  .speed=${this.speed}
+                  @close=${this.closeRun}
+                  @speed-change=${(e: CustomEvent<Speed>) =>
+                    this.setSpeed(e.detail)}
+                  @replay=${() => void this.replay()}
                   @node-select=${(e: CustomEvent<string>) =>
                     (this.selected = e.detail)}
                 ></ff-run-panel>`
@@ -368,18 +398,77 @@ export class FfApp extends LitElement {
   }
 
   // startRun sends the current flow for a test run and shows the outcome.
+  // startRun sends the current flow for a test run. Its events go through
+  // the player, so the run is shown at the chosen playback speed; the final
+  // result is shown once playback has caught up.
   private async startRun({ trigger, payload }: RunRequest) {
-    const seq = ++this.runSeq
+    const { seq, player } = this.beginPlayback(this.flow, false)
     const flow = this.flow
-    let trace: TraceEvent[] = []
-    this.run = { state: { phase: 'running', trace }, flow }
+    let streamed = 0
     const outcome = await runFlow(flow, trigger, payload, (event) => {
+      streamed++
+      player.push(event)
+    })
+    if (!outcome.ok) {
+      player.stop()
+    } else if (streamed === 0) {
+      // A non-streaming answer: play its trace all the same.
+      outcome.result.trace.forEach((e) => player.push(e))
+    }
+    await this.finishPlayback(seq, player, flow, outcome)
+  }
+
+  // replay plays the last run again from its recorded trace.
+  private async replay() {
+    const run = this.run
+    if (run?.state.phase !== 'done' || !run.state.outcome.ok) return
+    const { outcome } = run.state
+    const { seq, player } = this.beginPlayback(run.flow, true)
+    outcome.result.trace.forEach((e) => player.push(e))
+    await this.finishPlayback(seq, player, run.flow, outcome)
+  }
+
+  // beginPlayback stops any playback in progress and starts a new one that
+  // shows events in the results panel and on the canvas.
+  private beginPlayback(flow: Flow, replay: boolean) {
+    this.player?.stop()
+    const seq = ++this.runSeq
+    let trace: TraceEvent[] = []
+    this.run = { state: { phase: 'running', trace, replay }, flow }
+    const player = new TracePlayer((event) => {
       if (seq !== this.runSeq) return
       trace = [...trace, event]
-      this.run = { state: { phase: 'running', trace }, flow }
-    })
+      this.run = { state: { phase: 'running', trace, replay }, flow }
+    }, this.speed)
+    this.player = player
+    return { seq, player }
+  }
+
+  private async finishPlayback(
+    seq: number,
+    player: TracePlayer,
+    flow: Flow,
+    outcome: RunOutcome,
+  ) {
+    await player.drained()
     if (seq !== this.runSeq) return
     this.run = { state: { phase: 'done', outcome }, flow }
+  }
+
+  private closeRun = () => {
+    this.player?.stop()
+    this.runSeq++
+    this.run = undefined
+  }
+
+  private setSpeed(speed: Speed) {
+    this.speed = speed
+    this.player?.setSpeed(speed)
+    try {
+      localStorage.setItem(SPEED_KEY, speed)
+    } catch {
+      // Storage may be unavailable (private mode); the choice just isn't kept.
+    }
   }
 
   // marks derives the canvas marks from the latest run, if any.
@@ -404,8 +493,7 @@ export class FfApp extends LitElement {
     this.fileName = fileName
     this.selected = undefined
     this.message = undefined
-    this.run = undefined
-    this.runSeq++
+    this.closeRun()
     this.docKey++
   }
 

@@ -365,6 +365,8 @@ Frontend lives in `frontend/` next to `backend/`. Same repo (monorepo decision d
 - Test runs are streamed ([api-v1.md](api-v1.md), "Streaming"): the results panel fills in row by row as nodes start and finish, instead of appearing at the end.
 - The canvas shows each node's state in the latest run: **running** (blue glow), **done** (green, ✓), **failed** (red, ✗); the trigger counts as done once it has emitted. Nodes the run did not reach are dimmed once the run has finished. The marks stay until the results panel is closed, another run starts, or another flow is opened.
 - Clicking a row in the results panel selects that node on the canvas, so its config is at hand while reading its output.
+- **Playback speed.** Most runs finish in milliseconds, too fast to follow. So the editor *plays back* the trace at a readable pace instead of showing it as it arrives: each node stays "running" for a moment, then gets its mark, then the next node starts. Only the display is slowed — the backend runs at full speed, and the durations shown are the real ones. Speeds: **Real time** (no delay), **Normal** (≈0.6 s per node, the default) and **Slow** (≈1.5 s per node), chosen in the results panel and remembered in the browser. A run that is slower than the playback pace is shown as its events arrive. Switching to Real time during playback jumps to the end.
+- **Replay** in the results panel plays the last run again from its recorded trace, without running the flow again.
 - Pausing, stepping and breakpoints (a real step-debugger) are Phase 7.
 
 ### Phase 3 — Server + Storage
