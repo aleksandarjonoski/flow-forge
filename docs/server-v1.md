@@ -104,7 +104,7 @@ CREATE TABLE trace_events (
 ```
 
 - **Timestamps** are RFC 3339 UTC with milliseconds (`2026-10-31T14:03:07.123Z`), so text order is time order.
-- **The document is stored verbatim** — the exact bytes the editor sent, which is the canonical form (design.md §7.2). Export gives back the same file byte for byte. The server parses it (§6.2) but never re-serializes it.
+- **The document is stored verbatim** — the exact bytes the editor sent, which is the canonical form (design.md §7.2), plus one trailing newline (a JSON value inside a request body cannot carry the newline a canonical file ends with). The server parses it (§6.2) but never re-serializes it, so the stored text stays diff-friendly. API responses carry the document as a JSON value, which Go's encoder compacts; the editor writes files in canonical form itself.
 - **What lives outside the document:** `revision`, `enabled` and the timestamps are server state about a flow, not part of the flow. This keeps design.md §7.1: everything that defines *what a flow does* is in its JSON; the database only adds *where it is deployed*.
 - **Trace events are stored as JSON blobs** in the API shape, so reading a trace back is one query and no mapping.
 
@@ -220,7 +220,7 @@ The newest **1000 executions per flow** are kept (`-keep-executions`, `0` = keep
 
 ## 6. API
 
-The editor's API, on the editor listener. Phase 2's rules carry over ([api-v1.md](api-v1.md)): JSON bodies, 1 MiB request limit, unknown request fields rejected, and the error shape `{"error": "…", "problems": [ … ]}`. These endpoints move into api-v1.md as they are built.
+The editor's API, on the editor listener. Phase 2's rules carry over ([api-v1.md](api-v1.md)): JSON bodies, 1 MiB request limit, unknown request fields rejected, and the error shape `{"error": "…", "problems": [ … ]}`. These endpoints move into api-v1.md as they are built: the flow library (§6.1–6.3) is there now; executions (§6.4) follow with slice 4.
 
 ### 6.1 Endpoints
 
@@ -242,7 +242,7 @@ The editor's API, on the editor listener. Phase 2's rules carry over ([api-v1.md
 
 - **A save must parse; it need not compile.** The document must pass `flow.Parse` — what the editor's Open already requires — but a flow with a missing required config or a bad expression can still be saved, so work in progress is never lost. Compiling is checked on **start**.
 - **The ID is fixed.** On `PUT`, the document's `id` must equal the path's `{id}`, else `400`. IDs must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`, checked on create, because they appear in URLs and log lines.
-- **Lost-update guard.** `PUT` carries the `revision` the editor loaded. If the stored revision differs — another tab or person saved meanwhile — the answer is `409` with the current stored flow, and nothing is written. The editor then offers to reload or overwrite (overwrite = save again with the new revision).
+- **Lost-update guard.** `PUT` carries the `revision` the editor loaded. If the stored revision differs — another tab or person saved meanwhile — the answer is `409` with `{"error": "…", "current": <the stored flow, §6.3>}`, and nothing is written. The editor then offers to reload or overwrite (overwrite = save again with the new revision).
 
 ### 6.3 The stored flow
 
@@ -370,7 +370,7 @@ Exit codes as today: `0` clean shutdown, `1` load or runtime error (including a 
 
 - **SQLite, pure Go (`modernc.org/sqlite`).** No database server, static build. Slower than the CGO driver in benchmarks, which does not matter at this scale.
 - **Homegrown migrations** over `golang-migrate`: ~50 lines, no dependency, and SQLite's `user_version` does the bookkeeping.
-- **Documents stored verbatim**, not as columns: the JSON stays the source of truth and export is exact.
+- **Documents stored verbatim**, not as columns: the JSON stays the source of truth and the stored text stays diff-friendly.
 - **Two listeners**, so the unauthenticated editor is never exposed by exposing the flows.
 - **Save does not require compile; start does.** Work in progress is never lost, and broken flows never deploy.
 - **Compile before stopping** on redeploy, so a broken revision does not take down a running one.

@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aleksandarjonoski/flow-forge/backend/internal/api"
 	"github.com/aleksandarjonoski/flow-forge/backend/internal/engine"
+	"github.com/aleksandarjonoski/flow-forge/backend/internal/store"
 )
 
 const helloFlow = "../../examples/hello.flow.json"
@@ -143,44 +143,159 @@ func TestCLI_ServeBadAddress(t *testing.T) {
 	}
 }
 
-// TestServeAPI runs the editor API behind a real listener: a test run of the
-// hello flow completes, and the server shuts down cleanly.
-func TestServeAPI(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+// server is runServer on two loopback listeners, for tests.
+type server struct {
+	api, flows string // base URLs
+	cancel     context.CancelFunc
+	done       chan error
+}
+
+func startServer(t *testing.T, dir string) *server {
+	t.Helper()
+	apiLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Fatalf("listen: %v", err)
+		t.Fatal(err)
+	}
+	flowsLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- serveAPI(ctx, ln, api.NewHandler(engine.DefaultRegistry)) }()
+	s := &server{
+		api:    "http://" + apiLn.Addr().String(),
+		flows:  "http://" + flowsLn.Addr().String(),
+		cancel: cancel,
+		done:   make(chan error, 1),
+	}
+	go func() { s.done <- runServer(ctx, dir, apiLn, flowsLn) }()
+	t.Cleanup(func() { s.stop(t) })
+	return s
+}
 
+// stop shuts the server down and checks it returned cleanly. Safe to call
+// twice.
+func (s *server) stop(t *testing.T) {
+	t.Helper()
+	if s.done == nil {
+		return
+	}
+	s.cancel()
+	select {
+	case err := <-s.done:
+		if err != nil {
+			t.Errorf("runServer = %v, want nil", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("runServer did not return after cancel")
+	}
+	s.done = nil
+}
+
+// call sends a request and decodes a JSON answer into out (if non-nil).
+func call(t *testing.T, method, url, body string, out any) int {
+	t.Helper()
+	req, err := http.NewRequest(method, url, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, url, err)
+	}
+	defer resp.Body.Close()
+	if out != nil {
+		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+			t.Fatalf("%s %s: decode: %v", method, url, err)
+		}
+	}
+	return resp.StatusCode
+}
+
+// TestRunServer is the server round trip: a flow is stored and deployed
+// through the API, called on the flows listener, and running again after a
+// restart on the same data directory.
+func TestRunServer(t *testing.T) {
+	dir := t.TempDir()
+	s := startServer(t, dir)
+
+	var health map[string]string
+	if code := call(t, "GET", s.api+"/api/health", "", &health); code != 200 || health["status"] != "ok" {
+		t.Fatalf("health = %d %v", code, health)
+	}
+
+	// Test runs still work.
 	flowJSON, err := os.ReadFile(helloFlow)
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := `{"flow": ` + string(flowJSON) + `, "payload": {"body": {"name": "ada"}}}`
-	resp, err := http.Post("http://"+ln.Addr().String()+"/api/flows/run", "application/json", strings.NewReader(body))
-	if err != nil {
-		t.Fatalf("POST: %v", err)
-	}
-	defer resp.Body.Close()
-	var got struct {
-		Status string `json:"status"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp.StatusCode != http.StatusOK || got.Status != "completed" {
-		t.Errorf("response = %d %q, want 200 completed", resp.StatusCode, got.Status)
+	var run struct{ Status string }
+	call(t, "POST", s.api+"/api/flows/run", `{"flow": `+string(flowJSON)+`, "payload": {"body": {"name": "ada"}}}`, &run)
+	if run.Status != "completed" {
+		t.Errorf("test run = %q, want completed", run.Status)
 	}
 
-	cancel()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Errorf("serveAPI = %v, want nil", err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("serveAPI did not return after cancel")
+	if code := call(t, "POST", s.api+"/api/flows", `{"flow": `+string(flowJSON)+`}`, nil); code != http.StatusCreated {
+		t.Fatalf("create = %d", code)
+	}
+	var started struct{ State string }
+	call(t, "POST", s.api+"/api/flows/flow-hello/start", "", &started)
+	if started.State != "running" {
+		t.Fatalf("start state = %q", started.State)
+	}
+	if code := call(t, "POST", s.flows+"/webhook", `{"name": "ada"}`, nil); code != http.StatusAccepted {
+		t.Errorf("POST /webhook = %d, want 202", code)
+	}
+	// The editor API is not served on the flows listener, and the reverse.
+	if code := call(t, "GET", s.flows+"/api/flows", "", nil); code != http.StatusNotFound {
+		t.Errorf("API on the flows listener = %d, want 404", code)
+	}
+	if code := call(t, "POST", s.api+"/webhook", "{}", nil); code != http.StatusNotFound {
+		t.Errorf("flow route on the editor listener = %d, want 404", code)
+	}
+
+	// Restart on the same data directory: the flow is deployed again.
+	s.stop(t)
+	s = startServer(t, dir)
+	var got struct {
+		State           string
+		RunningRevision int64
+	}
+	call(t, "GET", s.api+"/api/flows/flow-hello", "", &got)
+	if got.State != "running" || got.RunningRevision != 1 {
+		t.Errorf("after restart = %+v, want running revision 1", got)
+	}
+	if code := call(t, "POST", s.flows+"/webhook", `{"name": "ada"}`, nil); code != http.StatusAccepted {
+		t.Errorf("POST /webhook after restart = %d, want 202", code)
+	}
+}
+
+func TestCLI_ServeDataDirInUse(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	var stderr bytes.Buffer
+	code := cli([]string{"serve", "-addr", "127.0.0.1:0", "-flows-addr", "127.0.0.1:0", "-data", dir}, &stderr)
+	if code != 1 || !strings.Contains(stderr.String(), "in use") {
+		t.Errorf("exit %d, stderr %q; want 1 and the data directory in use", code, stderr.String())
+	}
+}
+
+func TestDataDir(t *testing.T) {
+	t.Setenv("FLOWFORGE_DATA", "/from/env")
+	if got, _ := dataDir("/from/flag"); got != "/from/flag" {
+		t.Errorf("flag: %s", got)
+	}
+	if got, _ := dataDir(""); got != "/from/env" {
+		t.Errorf("env: %s", got)
+	}
+	t.Setenv("FLOWFORGE_DATA", "")
+	home, _ := os.UserHomeDir()
+	if got, _ := dataDir(""); got != filepath.Join(home, ".flowforge") {
+		t.Errorf("default: %s", got)
 	}
 }

@@ -1,5 +1,5 @@
 // Package api is FlowForge's HTTP API for the visual editor. The contract is
-// docs/api-v1.md; Phase 2 only has test runs.
+// docs/api-v1.md (test runs) and docs/server-v1.md §6 (the flow library).
 package api
 
 import (
@@ -16,6 +16,8 @@ import (
 
 	"github.com/aleksandarjonoski/flow-forge/backend/internal/engine"
 	"github.com/aleksandarjonoski/flow-forge/backend/internal/flow"
+	"github.com/aleksandarjonoski/flow-forge/backend/internal/host"
+	"github.com/aleksandarjonoski/flow-forge/backend/internal/store"
 )
 
 const (
@@ -26,11 +28,22 @@ const (
 	runTimeout = 60 * time.Second
 )
 
-// NewHandler returns the API handler. Flows are compiled against reg.
-func NewHandler(reg *engine.Registry) http.Handler {
+// Options configures the API handler.
+type Options struct {
+	// Store and Host serve the flow library. When either is nil, only test
+	// runs are served.
+	Store *store.Store
+	Host  *host.Host
+}
+
+// NewHandler returns the API handler. Test runs are compiled against reg.
+func NewHandler(reg *engine.Registry, opts Options) http.Handler {
 	h := &handler{reg: reg, runTimeout: runTimeout}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/flows/run", h.run)
+	if opts.Store != nil && opts.Host != nil {
+		(&library{store: opts.Store, host: opts.Host}).register(mux)
+	}
 	return mux
 }
 

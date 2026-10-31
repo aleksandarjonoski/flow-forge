@@ -69,7 +69,7 @@ const twoTriggerFlow = `{
 }`
 
 func TestRun_HelloCompletes(t *testing.T) {
-	h := NewHandler(engine.DefaultRegistry)
+	h := NewHandler(engine.DefaultRegistry, Options{})
 	var resp runResponse
 	code := post(t, h, runBody(t, map[string]any{
 		"flow":    helloFlow(t),
@@ -113,7 +113,7 @@ func TestRun_HelloCompletes(t *testing.T) {
 func TestRun_NodeFailureIsA200(t *testing.T) {
 	var resp runResponse
 	// No payload: "'hello ' + input.body.name" fails in the transform.
-	code := post(t, NewHandler(engine.DefaultRegistry), runBody(t, map[string]any{"flow": helloFlow(t)}), &resp)
+	code := post(t, NewHandler(engine.DefaultRegistry, Options{}), runBody(t, map[string]any{"flow": helloFlow(t)}), &resp)
 
 	if code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", code)
@@ -127,7 +127,7 @@ func TestRun_NodeFailureIsA200(t *testing.T) {
 }
 
 func TestRun_TriggerChoice(t *testing.T) {
-	h := NewHandler(engine.DefaultRegistry)
+	h := NewHandler(engine.DefaultRegistry, Options{})
 	cases := []struct {
 		name    string
 		trigger string
@@ -165,7 +165,7 @@ func TestRun_TriggerChoice(t *testing.T) {
 }
 
 func TestRun_BadRequests(t *testing.T) {
-	h := NewHandler(engine.DefaultRegistry)
+	h := NewHandler(engine.DefaultRegistry, Options{})
 	badConfig := `{"id": "f", "version": "1.0", "nodes": [
 	  {"id": "t", "type": "http_trigger"},
 	  {"id": "x", "type": "no_such_type"}
@@ -205,7 +205,7 @@ func TestRun_BadRequests(t *testing.T) {
 func TestRun_CompileProblemsAreListed(t *testing.T) {
 	// Unknown type is caught by Validate before any Init runs.
 	var resp errorResponse
-	post(t, NewHandler(engine.DefaultRegistry), `{"flow": {"id": "f", "version": "1.0", "nodes": [
+	post(t, NewHandler(engine.DefaultRegistry, Options{}), `{"flow": {"id": "f", "version": "1.0", "nodes": [
 	  {"id": "t", "type": "http_trigger", "config": {"path": "/x"}},
 	  {"id": "a", "type": "nope1"},
 	  {"id": "b", "type": "nope2"}
@@ -252,7 +252,7 @@ func TestRun_Timeout(t *testing.T) {
 
 func TestRun_OnlyPOST(t *testing.T) {
 	rec := httptest.NewRecorder()
-	NewHandler(engine.DefaultRegistry).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/flows/run", nil))
+	NewHandler(engine.DefaultRegistry, Options{}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/flows/run", nil))
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("GET status = %d, want 405", rec.Code)
 	}
@@ -292,7 +292,7 @@ func TestRun_Stream(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/flows/run", strings.NewReader(body))
 	req.Header.Set("Accept", "text/event-stream")
 	rec := httptest.NewRecorder()
-	NewHandler(engine.DefaultRegistry).ServeHTTP(rec, req)
+	NewHandler(engine.DefaultRegistry, Options{}).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "text/event-stream" {
 		t.Fatalf("response = %d %q, want 200 text/event-stream", rec.Code, rec.Header().Get("Content-Type"))
@@ -333,7 +333,7 @@ func TestRun_StreamIsLive(t *testing.T) {
 		time.Sleep(delay)
 	}))
 	defer slow.Close()
-	srv := httptest.NewServer(NewHandler(engine.DefaultRegistry))
+	srv := httptest.NewServer(NewHandler(engine.DefaultRegistry, Options{}))
 	defer srv.Close()
 
 	flowJSON := `{"id": "f", "version": "1.0",
@@ -373,7 +373,7 @@ func TestRun_StreamEarlyErrorsAreJSON(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/flows/run", strings.NewReader(`{"flow": {"id": "f", "version": "2.0"}}`))
 	req.Header.Set("Accept", "text/event-stream")
 	rec := httptest.NewRecorder()
-	NewHandler(engine.DefaultRegistry).ServeHTTP(rec, req)
+	NewHandler(engine.DefaultRegistry, Options{}).ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest || rec.Header().Get("Content-Type") != "application/json" {
 		t.Errorf("response = %d %q, want 400 application/json", rec.Code, rec.Header().Get("Content-Type"))
 	}

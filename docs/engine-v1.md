@@ -231,7 +231,7 @@ When a trigger calls `emit(payload)`:
 - `SIGINT` / `SIGTERM` shut down gracefully: the HTTP server stops accepting requests (5 s grace), then the engine stops.
 - Exit codes: `0` clean shutdown, `1` load/compile/runtime error, `2` usage error.
 
-`flowforge serve [-addr 127.0.0.1:8090]` serves the HTTP API used by the visual editor instead of running one flow; see [api-v1.md](api-v1.md). It uses the same exit codes.
+`flowforge serve [-addr 127.0.0.1:8090] [-flows-addr :8080] [-data dir]` runs the server instead of one flow: the editor's API, and every deployed flow from the data directory; see [server-v1.md](server-v1.md) and [api-v1.md](api-v1.md). It uses the same exit codes.
 
 ---
 

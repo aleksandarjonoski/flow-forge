@@ -1,8 +1,9 @@
-// Command flowforge runs a FlowForge flow, or serves the API the visual
-// editor uses. See docs/engine-v1.md §4.6 and docs/api-v1.md.
+// Command flowforge runs a FlowForge flow, or serves the editor API and the
+// deployed flows. See docs/engine-v1.md §4.6, docs/api-v1.md and
+// docs/server-v1.md §10.
 //
 //	flowforge run [-addr :8080] <flow.json>
-//	flowforge serve [-addr 127.0.0.1:8090]
+//	flowforge serve [-addr 127.0.0.1:8090] [-flows-addr :8080] [-data dir]
 package main
 
 import (
@@ -16,18 +17,23 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
 	"github.com/aleksandarjonoski/flow-forge/backend/internal/api"
 	"github.com/aleksandarjonoski/flow-forge/backend/internal/engine"
 	"github.com/aleksandarjonoski/flow-forge/backend/internal/flow"
+	"github.com/aleksandarjonoski/flow-forge/backend/internal/host"
 	_ "github.com/aleksandarjonoski/flow-forge/backend/internal/nodes" // register built-in nodes
+	"github.com/aleksandarjonoski/flow-forge/backend/internal/store"
 )
 
 const usage = `usage:
-  flowforge run [-addr :8080] <flow.json>     run a flow until interrupted
-  flowforge serve [-addr 127.0.0.1:8090]      serve the editor API (local use only)`
+  flowforge run [-addr :8080] <flow.json>
+      run a flow until interrupted
+  flowforge serve [-addr 127.0.0.1:8090] [-flows-addr :8080] [-data dir]
+      serve the editor API (local use only) and the deployed flows`
 
 // shutdownGrace is how long in-flight HTTP requests get on shutdown.
 const shutdownGrace = 5 * time.Second
@@ -107,26 +113,39 @@ func runCmd(args []string, stderr io.Writer) int {
 	return 0
 }
 
-// serveCmd implements `flowforge serve`: serve the editor API until
-// interrupted. See docs/api-v1.md.
+// serveCmd implements `flowforge serve`: the editor API and every deployed
+// flow, until interrupted. See docs/server-v1.md.
 func serveCmd(args []string, stderr io.Writer) int {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
-	addr := fs.String("addr", "127.0.0.1:8090", "listen address for the API (no auth: keep it local)")
+	addr := fs.String("addr", "127.0.0.1:8090", "listen address for the editor API (no auth: keep it local)")
+	flowsAddr := fs.String("flows-addr", ":8080", "listen address for the deployed flows' http_trigger routes")
+	data := fs.String("data", "", "data directory (default $FLOWFORGE_DATA, else ~/.flowforge)")
 	if code := parseFlags(fs, args, 0, stderr); code >= 0 {
 		return code
 	}
 
 	slog.SetDefault(slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
 
-	ln, err := net.Listen("tcp", *addr)
+	dir, err := dataDir(*data)
 	if err != nil {
 		fmt.Fprintf(stderr, "flowforge: %v\n", err)
 		return 1
 	}
+	apiLn, err := net.Listen("tcp", *addr)
+	if err != nil {
+		fmt.Fprintf(stderr, "flowforge: %v\n", err)
+		return 1
+	}
+	flowsLn, err := net.Listen("tcp", *flowsAddr)
+	if err != nil {
+		apiLn.Close()
+		fmt.Fprintf(stderr, "flowforge: %v\n", err)
+		return 1
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	slog.Info("flowforge serving API", slog.String("addr", ln.Addr().String()))
-	if err := serveAPI(ctx, ln, api.NewHandler(engine.DefaultRegistry)); err != nil {
+	if err := runServer(ctx, dir, apiLn, flowsLn); err != nil {
 		fmt.Fprintf(stderr, "flowforge: %v\n", err)
 		return 1
 	}
@@ -134,24 +153,98 @@ func serveCmd(args []string, stderr io.Writer) int {
 	return 0
 }
 
-// serveAPI serves h on ln until ctx is cancelled or the server fails, then
-// shuts down, giving in-flight requests shutdownGrace to finish.
-func serveAPI(ctx context.Context, ln net.Listener, h http.Handler) error {
-	srv := &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second}
-	srvErr := make(chan error, 1)
-	go func() { srvErr <- srv.Serve(ln) }()
+// dataDir resolves the data directory: the flag, else $FLOWFORGE_DATA, else
+// ~/.flowforge (server-v1.md §3.1).
+func dataDir(flagValue string) (string, error) {
+	if flagValue != "" {
+		return flagValue, nil
+	}
+	if env := os.Getenv("FLOWFORGE_DATA"); env != "" {
+		return env, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("no data directory: set -data or FLOWFORGE_DATA (%w)", err)
+	}
+	return filepath.Join(home, ".flowforge"), nil
+}
 
+// runServer opens the store in dir, starts the deployed flows and serves the
+// editor API on apiLn and the flows on flowsLn until ctx is cancelled. Then
+// both listeners stop accepting requests, the flows stop (staying deployed
+// for the next start) and the store closes (server-v1.md §4.5). It closes
+// both listeners.
+func runServer(ctx context.Context, dir string, apiLn, flowsLn net.Listener) error {
+	st, err := store.Open(dir)
+	if err != nil {
+		apiLn.Close()
+		flowsLn.Close()
+		return err
+	}
+	defer st.Close()
+
+	h := host.New(st, engine.DefaultRegistry, host.Options{})
+	res, err := h.Boot(ctx)
+	if err != nil {
+		apiLn.Close()
+		flowsLn.Close()
+		return errors.Join(err, h.Shutdown())
+	}
+	if res.Interrupted > 0 {
+		slog.Warn("executions interrupted by the last shutdown", slog.Int64("count", res.Interrupted))
+	}
+	slog.Info("flows started", slog.Int("started", res.Started), slog.Int("failed", res.Failed))
+
+	apiAddr := apiLn.Addr().String()
+	if !isLoopback(apiLn.Addr()) {
+		slog.Warn("the editor API has no authentication and is reachable from the network", slog.String("addr", apiAddr))
+	}
+	slog.Info("flowforge serving",
+		slog.String("data", dir), slog.String("editor", apiAddr), slog.String("flows", flowsLn.Addr().String()))
+
+	apiHandler := api.NewHandler(engine.DefaultRegistry, api.Options{Store: st, Host: h})
+	srvErr := serveHTTP(ctx, []listener{{apiLn, apiHandler}, {flowsLn, h.Handler()}})
+	return errors.Join(srvErr, h.Shutdown())
+}
+
+// isLoopback reports whether addr is a loopback address.
+func isLoopback(addr net.Addr) bool {
+	tcp, ok := addr.(*net.TCPAddr)
+	return ok && tcp.IP.IsLoopback()
+}
+
+// listener is one listener and the handler to serve on it.
+type listener struct {
+	ln net.Listener
+	h  http.Handler
+}
+
+// serveHTTP serves each handler on its listener until ctx is cancelled or a
+// server fails, then shuts every server down, giving in-flight requests
+// shutdownGrace to finish.
+func serveHTTP(ctx context.Context, ls []listener) error {
+	srvErr := make(chan error, len(ls))
+	servers := make([]*http.Server, len(ls))
+	for i, l := range ls {
+		srv := &http.Server{Handler: l.h, ReadHeaderTimeout: 10 * time.Second}
+		servers[i] = srv
+		go func() { srvErr <- srv.Serve(l.ln) }()
+	}
+
+	var errs []error
 	select {
 	case err := <-srvErr:
-		return fmt.Errorf("http server: %w", err)
+		errs = append(errs, fmt.Errorf("http server: %w", err))
 	case <-ctx.Done():
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("http shutdown: %w", err)
+	for _, srv := range servers {
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			errs = append(errs, fmt.Errorf("http shutdown: %w", err))
+		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // load parses and compiles the flow at path against the default registry.
