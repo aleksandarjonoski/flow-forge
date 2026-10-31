@@ -78,7 +78,7 @@ What FlowForge *can do* at each milestone. Each phase is a meaningful product st
 - Load a Flow JSON file from disk.
 - Validate it (cycles, unknown node types, dangling edges).
 - Run it indefinitely. Triggers fire, executions run, results are logged.
-- 5 node types: `http_trigger`, `cron_trigger`, `http_request`, `transform`, `log`.
+- 5 node types: `http_trigger`, `cron_trigger`, `http_request`, `transform`, `log` (a 6th, `parse_json`, comes with Phase 2.5).
 - CLI: `flowforge run flow.json`.
 - Trace events emitted to stdout as JSON lines.
 
@@ -88,7 +88,14 @@ What FlowForge *can do* at each milestone. Each phase is a meaningful product st
 - Load existing flow JSON for editing.
 - Run a flow from the UI. Watch the trace events live.
 
-### Phase 3 — Server + Storage (next)
+### Phase 2.5 — Data Contracts & Mapper (next)
+- Declared data shapes (schemas) so flows can rely on their data, and the editor can show it without a test run.
+- `parse_json` node: turns raw data into checked, typed data; triggers stay format-neutral.
+- Transform mapping mode with a TIBCO-style visual mapper: available data on the left, output structure on the right, lines between them.
+- A node editor with General / Input / Output tabs for every node.
+- Full design: [data-v1.md](data-v1.md).
+
+### Phase 3 — Server + Storage
 - Persistent flow library in SQLite.
 - REST API: CRUD flows, start/stop a flow, list executions.
 - Multiple flows hosted by one server process.
@@ -241,7 +248,7 @@ Every artifact derives from the Flow JSON. The visual editor *renders* it; the r
 JSON formatting is stable (key order preserved, 2-space indent). Two semantically-equal flows produce identical text. Diffs are reviewable.
 
 ### 7.3 Plugin-first node system
-The 5 built-in nodes are not special. They use the same registry, same interface, same lifecycle as third-party plugins. If we can't build something as a plugin, the design is wrong.
+The built-in nodes are not special. They use the same registry, same interface, same lifecycle as third-party plugins. If we can't build something as a plugin, the design is wrong.
 
 ### 7.4 Validation over inference
 When the engine encounters an ambiguous configuration (e.g., multi-inbound edges in v1), it **refuses** instead of inventing a default. Implicit behavior is the source of every long-term integration bug.
@@ -338,6 +345,14 @@ Frontend lives in `frontend/` next to `backend/`. Same repo (monorepo decision d
 - A node type with no catalog entry (e.g. a third-party plugin) gets a raw JSON editor for its `config`, applied when the JSON parses as an object.
 - Typing in the panel does not reset pan or zoom: the canvas syncs changes in place (see slice 7).
 
+**Input data view** (added after slice 9):
+- The property panel shows, above the config, the **shape of the data the node receives** — the output of the node before it — as a tree of field names and types, so expressions can be written without guessing. A trigger, which receives nothing, shows what it **emits** instead.
+- Two sources, best first:
+  1. **The last test run.** If the run passed through the previous node, its real output is shown: every field, with its type and value. This is used only while the run still matches the flow: the previous node and everything upstream of it must have the same IDs, types, config and wiring as when the run happened. Otherwise the panel falls back to (2), so it never shows stale fields.
+  2. **The previous node's type** (an *output contract* in the catalog): `http_trigger` → `{headers, query, body}`, `cron_trigger` → `{firedAt}`, `http_request` → `{status, headers, body}`. Parts no type can know (a webhook body, an API response body, a transform's result) are shown as "any". `log` passes its input through, so its output is whatever reaches it. When parts are unknown, the panel offers to run the flow once to see real fields.
+- **Click a field to insert its path** into the config field being edited, written the way that field expects: `input.body.name` in a transform expression, `{{.input.body.name}}` in a log message, `body.name` in `http_request`'s *Body from*. Keys that are not plain identifiers are quoted (`input.headers["Content-Type"]`, `{{index .input.headers "Content-Type"}}`). Each config field's insert style is set in the catalog (`x-insert`).
+- This view is read-only. Declared schemas (from `parse_json` and mapping-mode transforms) become a third source between (1) and (2), and the view grows into the node editor's Input tab — see [data-v1.md](data-v1.md) §7.
+
 **Opening and saving files** (set in slice 6):
 - The header shows the flow's name, a dot when there are unsaved changes, and **Open…** / **Save** buttons (also Ctrl/⌘+O and Ctrl/⌘+S). Open reads a local `.json` file. Save downloads the flow as `<file name>` — the opened file's name, or `<flow id>.flow.json` for a flow that did not come from a file. Writing back to the same file on disk (File System Access API) is not in scope.
 - `src/flow/file.ts` holds `parseFlow` and `serializeFlow`:
@@ -368,6 +383,19 @@ Frontend lives in `frontend/` next to `backend/`. Same repo (monorepo decision d
 - **Playback speed.** Most runs finish in milliseconds, too fast to follow. So the editor *plays back* the trace at a readable pace instead of showing it as it arrives: each node stays "running" for a moment, then gets its mark, then the next node starts. Only the display is slowed — the backend runs at full speed, and the durations shown are the real ones. Speeds: **Real time** (no delay), **Normal** (≈0.6 s per node, the default) and **Slow** (≈1.5 s per node), chosen in the results panel and remembered in the browser. A run that is slower than the playback pace is shown as its events arrive. Switching to Real time during playback jumps to the end.
 - **Replay** in the results panel plays the last run again from its recorded trace, without running the flow again.
 - Pausing, stepping and breakpoints (a real step-debugger) are Phase 7.
+
+### Phase 2.5 — Data Contracts & Mapper (next)
+Designed in [data-v1.md](data-v1.md); built in this order:
+
+| # | Slice | Notes | Status |
+|---|---|---|---|
+| 1 | Schema subset | `backend/internal/schema` + TypeScript twin: validate strictly, drop extra fields, report every problem with its path (data-v1.md §3); both run the shared `testdata/cases.json` | ✅ done |
+| 2 | `parse_json` node | 6th built-in node; schema config field with "Generate from sample / last run"; input data view shows declared schemas (§4, §7.3–7.4) | next |
+| 3 | Transform mapping mode | `schema` + `mapping` config, load-time checks, field-named errors (§5) | |
+| 4 | Node editor | Wide overlay with General / Input / Output tabs for every node; schema tree editor (§7.1, §7.3) | |
+| 5 | Visual mapper | Mapping tab: available data ↔ output schema with solid/dashed lines, drag to map, inline expressions (§7.2) | |
+
+**Phase 2.5 done when:** a webhook body can be parsed against a declared schema, mapped visually into a new shape in a transform, and every node after the parse shows the declared fields without a test run.
 
 ### Phase 3 — Server + Storage
 
@@ -502,7 +530,7 @@ The things most likely to derail the project, with how we plan to address them.
 | Visual editor UX takes longer than the entire backend | Use an existing graph library. No custom canvas. |
 | Schema rewrites cascade through every layer | JSON schema is locked at 1.0 until end of Phase 3. Force-fit features into the existing shape. |
 | Plugin API breaks on every release | Keep the `Node` / `ActionNode` / `TriggerNode` interfaces tiny and stable. Plugin SDK = those three interfaces + the registry. |
-| Codegen complexity grows without bound | Start with a code generator that handles only the 5 built-in nodes. Plugin codegen is opt-in via plugin SDK additions. |
+| Codegen complexity grows without bound | Start with a code generator that handles only the built-in nodes. Plugin codegen is opt-in via plugin SDK additions. |
 | Self-hosted ops burden scares users away | Single-binary, single-file SQLite, sensible defaults. No required external services until Phase 8. |
 | Feature requests pull us toward Node-RED / n8n parity | Refuse. The wedge is Go-native + compile-to-binary. Catalog breadth is not the goal. |
 

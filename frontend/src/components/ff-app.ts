@@ -14,6 +14,7 @@ import {
 import { runFlow, type TraceEvent } from '../api/client.ts'
 import { TracePlayer, type Speed } from '../api/player.ts'
 import { runMarks } from '../api/trace.ts'
+import { dataView } from '../flow/data-view.ts'
 import type { RunOutcome } from '../api/client.ts'
 import {
   FlowParseError,
@@ -355,6 +356,11 @@ export class FfApp extends LitElement {
           node
             ? html`<ff-node-panel
                 .node=${node}
+                .dataView=${dataView(this.flow, node.id, this.lastRun)}
+                ?canRun=${triggers.length > 0}
+                @node-select=${(e: CustomEvent<string>) =>
+                  (this.selected = e.detail)}
+                @request-run=${() => this.runDialog.show()}
                 @node-change=${(e: CustomEvent<NodeChange>) =>
                   this.applyNodeChange(e.detail)}
                 @node-delete=${(e: CustomEvent<string>) =>
@@ -469,6 +475,13 @@ export class FfApp extends LitElement {
     } catch {
       // Storage may be unavailable (private mode); the choice just isn't kept.
     }
+  }
+
+  // lastRun is the latest finished test run, for the input data view.
+  private get lastRun() {
+    const run = this.run
+    if (run?.state.phase !== 'done' || !run.state.outcome.ok) return undefined
+    return { flow: run.flow, trace: run.state.outcome.result.trace }
   }
 
   // marks derives the canvas marks from the latest run, if any.

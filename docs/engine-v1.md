@@ -12,7 +12,7 @@ This document is the contract for v1. If something here is wrong, change the doc
 
 ### Goals (v1)
 - Load a Flow JSON (per the v1 schema) and execute it.
-- Support the 5 starter node types: `http_trigger`, `cron_trigger`, `http_request`, `transform`, `log`.
+- Support the starter node types: `http_trigger`, `cron_trigger`, `http_request`, `transform`, `log`, and `parse_json` (added with [data-v1.md](data-v1.md)).
 - Plugin-friendly: external packages can register new node types via a registry.
 - Deterministic, debuggable execution: every step emits a trace event.
 - Validate flows before running (cycles, dangling edges, unknown node types).
@@ -385,6 +385,9 @@ Each lives in `backend/internal/nodes/<name>.go` and registers itself via `init(
 - A non-2xx status is **not** an error: the status is data in the output. Transport failures (DNS, connection refused, timeout, invalid JSON response) fail the node (§7).
 
 ### `transform`
+Two modes, chosen per node: **expression** (below) or **mapping** — `schema` + `mapping` config that builds the output field by field and validates it against a declared schema; see [data-v1.md](data-v1.md) §5. A node uses one mode, never both.
+
+Expression mode:
 - Config: `expression` (string, required) — an expression in [expr-lang/expr](https://github.com/expr-lang/expr) syntax.
 - The expression is compiled once at `Init`, so syntax errors and unknown identifiers fail at load time. The compiled program is immutable and shared by concurrent executions.
 - Available identifiers:
@@ -396,6 +399,11 @@ Each lives in `backend/internal/nodes/<name>.go` and registers itself via `init(
   - `nil` yields a `nil` payload;
   - any other value (string, number, slice, …) is wrapped as `{"value": <result>}`.
 - A runtime evaluation error fails the node (§7).
+
+### `parse_json`
+- Config: `from` (dot path into the input, optional — the whole input when empty), `schema` (required — a declared schema, [data-v1.md](data-v1.md) §3).
+- Takes the value at `from`; a string is parsed as JSON, structured data is used as is. Validates it against `schema` (strict types, extra fields dropped) and outputs it. Any problem fails the node with every problem listed.
+- Full specification: [data-v1.md](data-v1.md) §4.
 
 ### `log`
 - Config: `level` (string, one of `debug`/`info`/`warn`/`error`, default `info`; anything else is an `Init` error), `message` (string, optional).

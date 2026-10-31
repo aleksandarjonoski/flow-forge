@@ -1,3 +1,5 @@
+import type { InsertStyle, Shape } from './shape.ts'
+
 // The node type catalog: what the editor knows about each built-in node type.
 // Config schemas use the JSON Schema subset described in docs/design.md
 // ("Node type catalog and property panel") and must match engine-v1.md §11
@@ -12,6 +14,8 @@ export interface StringProperty {
   pattern?: string
   format?: 'uri'
   'x-multiline'?: boolean
+  /** How a clicked input field's path is written into this field. */
+  'x-insert'?: InsertStyle
 }
 
 export interface StringMapProperty {
@@ -40,7 +44,16 @@ export interface NodeTypeSpec {
    * the payload of a test run (engine-v1.md §11).
    */
   samplePayload?: () => Record<string, unknown>
+  /**
+   * What the node outputs, as far as its type knows (engine-v1.md §11);
+   * "input" for nodes that pass their input through unchanged.
+   */
+  output: Shape | 'input'
 }
+
+// Shapes shared by several contracts.
+const STRING_MAP: Shape = { type: 'object', values: { type: 'string' } }
+const ANY_BODY = (note: string): Shape => ({ type: 'any', note })
 
 const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
 
@@ -73,6 +86,14 @@ export const NODE_TYPES: readonly NodeTypeSpec[] = [
       query: {},
       body: {},
     }),
+    output: {
+      type: 'object',
+      fields: {
+        headers: STRING_MAP,
+        query: STRING_MAP,
+        body: ANY_BODY('whatever the caller sends'),
+      },
+    },
   },
   {
     type: 'cron_trigger',
@@ -94,6 +115,7 @@ export const NODE_TYPES: readonly NodeTypeSpec[] = [
     samplePayload: () => ({
       firedAt: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
     }),
+    output: { type: 'object', fields: { firedAt: { type: 'string' } } },
   },
   {
     type: 'http_request',
@@ -125,9 +147,18 @@ export const NODE_TYPES: readonly NodeTypeSpec[] = [
           title: 'Body from',
           description:
             'Dot path into the input (e.g. body.user), sent as JSON. Leave empty for no body.',
+          'x-insert': 'path',
         },
       },
       required: ['url'],
+    },
+    output: {
+      type: 'object',
+      fields: {
+        status: { type: 'number' },
+        headers: STRING_MAP,
+        body: ANY_BODY('whatever the API returns'),
+      },
     },
   },
   {
@@ -144,10 +175,12 @@ export const NODE_TYPES: readonly NodeTypeSpec[] = [
           description:
             'expr-lang expression over input, nodes and env, e.g. { greeting: "hello " + input.body.name }.',
           'x-multiline': true,
+          'x-insert': 'expr',
         },
       },
       required: ['expression'],
     },
+    output: ANY_BODY('whatever the expression returns'),
   },
   {
     type: 'log',
@@ -170,9 +203,11 @@ export const NODE_TYPES: readonly NodeTypeSpec[] = [
             'Go template over .input and .nodes, e.g. hello {{.input.name}}.',
           default: 'payload',
           'x-multiline': true,
+          'x-insert': 'template',
         },
       },
     },
+    output: 'input',
   },
 ]
 

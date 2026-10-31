@@ -1,0 +1,212 @@
+{
+  "parse": [
+    {
+      "name": "valid nested schema",
+      "schema": {
+        "type": "object",
+        "title": "Order",
+        "properties": {
+          "id": { "type": "integer" },
+          "status": { "type": "string", "enum": ["new", "done"] },
+          "customer": {
+            "type": "object",
+            "properties": { "email": { "type": "string", "description": "Contact" } },
+            "required": ["email"]
+          },
+          "items": { "type": "array", "items": { "type": "number" } },
+          "note": { "type": "null" },
+          "paid": { "type": "boolean" }
+        },
+        "required": ["id", "customer"]
+      },
+      "problems": []
+    },
+    {
+      "name": "not an object",
+      "schema": "string",
+      "problems": ["must be a schema object, got string"]
+    },
+    {
+      "name": "missing and unknown types",
+      "schema": {
+        "type": "object",
+        "properties": { "a": {}, "b": { "type": "strin" }, "c": { "type": 3 } }
+      },
+      "problems": [
+        "a: type is required",
+        "b: unknown type \"strin\"",
+        "c: type must be a string"
+      ]
+    },
+    {
+      "name": "unsupported keywords",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": { "name": { "type": "string", "minLength": 1 } }
+      },
+      "problems": [
+        "unsupported keyword \"additionalProperties\"",
+        "name: unsupported keyword \"minLength\""
+      ]
+    },
+    {
+      "name": "keywords on the wrong type",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": { "type": "string", "properties": {}, "items": { "type": "string" } },
+          "b": { "type": "boolean", "enum": [true] },
+          "n": { "type": "number", "required": ["x"] }
+        }
+      },
+      "problems": [
+        "b: enum only applies to types string, number and integer",
+        "n: required only applies to type object",
+        "s: properties only apply to type object",
+        "s: items only apply to type array"
+      ]
+    },
+    {
+      "name": "required, enum and field names",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "a.b": { "type": "string" },
+          "status": { "type": "string", "enum": ["ok", 2] },
+          "level": { "type": "integer", "enum": [] }
+        },
+        "required": ["status", "missing", 7]
+      },
+      "problems": [
+        "field name \"a.b\" must be non-empty and must not contain \".\"",
+        "level: enum must be a non-empty list",
+        "status: enum value 2 is not of type string",
+        "required field \"missing\" is not in properties",
+        "required must be a list of field names"
+      ]
+    },
+    {
+      "name": "array items are checked with a [] path",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "orders": { "type": "array", "items": { "type": "object", "properties": { "id": { "type": "int" } } } }
+        }
+      },
+      "problems": ["orders[].id: unknown type \"int\""]
+    },
+    {
+      "name": "title must be text",
+      "schema": { "type": "object", "title": 5 },
+      "problems": ["title must be a string"]
+    }
+  ],
+  "validate": [
+    {
+      "name": "valid value, extra fields dropped",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "address": { "type": "object", "properties": { "city": { "type": "string" } } },
+          "tags": { "type": "array", "items": { "type": "object", "properties": { "id": { "type": "integer" } } } }
+        },
+        "required": ["name"]
+      },
+      "value": {
+        "name": "ada",
+        "extra": true,
+        "address": { "city": "Skopje", "zip": "1000" },
+        "tags": [{ "id": 1, "label": "x" }, { "id": 2 }]
+      },
+      "output": {
+        "name": "ada",
+        "address": { "city": "Skopje" },
+        "tags": [{ "id": 1 }, { "id": 2 }]
+      },
+      "problems": []
+    },
+    {
+      "name": "optional fields may be missing",
+      "schema": {
+        "type": "object",
+        "properties": { "a": { "type": "string" }, "b": { "type": "number" } }
+      },
+      "value": { "a": "x" },
+      "output": { "a": "x" },
+      "problems": []
+    },
+    {
+      "name": "every problem is reported with its path",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "status": { "type": "string", "enum": ["new", "done"] },
+          "customer": {
+            "type": "object",
+            "properties": { "email": { "type": "string" }, "age": { "type": "number" } },
+            "required": ["email"]
+          },
+          "items": { "type": "array", "items": { "type": "object", "properties": { "qty": { "type": "integer" } }, "required": ["qty"] } }
+        },
+        "required": ["id", "customer"]
+      },
+      "value": {
+        "id": 1.5,
+        "status": "open",
+        "customer": { "age": "36" },
+        "items": [{ "qty": 1 }, {}, { "qty": "2" }]
+      },
+      "problems": [
+        "customer.age: expected number, got string",
+        "customer.email: required field is missing",
+        "id: expected integer, got number",
+        "items[1].qty: required field is missing",
+        "items[2].qty: expected integer, got string",
+        "status: must be one of \"new\", \"done\""
+      ]
+    },
+    {
+      "name": "strict types",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "n": { "type": "number" },
+          "i": { "type": "integer" },
+          "b": { "type": "boolean" },
+          "z": { "type": "null" },
+          "a": { "type": "array" },
+          "o": { "type": "object" }
+        }
+      },
+      "value": { "n": "42", "i": 2.0, "b": "true", "z": 0, "a": {}, "o": [] },
+      "problems": [
+        "a: expected array, got object",
+        "b: expected boolean, got string",
+        "n: expected number, got string",
+        "o: expected object, got array",
+        "z: expected null, got number"
+      ]
+    },
+    {
+      "name": "top level of the wrong type",
+      "schema": { "type": "object" },
+      "value": "not an object",
+      "problems": ["expected object, got string"]
+    },
+    {
+      "name": "numeric enum",
+      "schema": { "type": "object", "properties": { "level": { "type": "integer", "enum": [1, 2, 3] } } },
+      "value": { "level": 4 },
+      "problems": ["level: must be one of 1, 2, 3"]
+    },
+    {
+      "name": "null where an object is required",
+      "schema": { "type": "object", "properties": { "c": { "type": "object" } }, "required": ["c"] },
+      "value": { "c": null },
+      "problems": ["c: expected object, got null"]
+    }
+  ]
+}

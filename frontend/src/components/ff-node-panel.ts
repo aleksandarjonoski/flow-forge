@@ -9,7 +9,11 @@ import {
   type StringMapProperty,
   type StringProperty,
 } from '../flow/node-types.ts'
+import type { DataView } from '../flow/data-view.ts'
+import { formatPath, type PathSegment } from '../flow/shape.ts'
 import type { FlowNode } from '../flow/types.ts'
+import './ff-data-view.ts'
+import type { InsertTarget } from './ff-data-view.ts'
 
 /** Detail of a node-change event: the node's new name and config. */
 export interface NodeChange {
@@ -27,6 +31,8 @@ export interface NodeChange {
  * @fires node-change - detail is a NodeChange
  * @fires close - the user closed the panel
  * @fires node-delete - detail is the node's ID; the user asked to delete it
+ * @fires node-select - (from the data view) the node the input comes from
+ * @fires request-run - (from the data view) run the flow to see real data
  */
 @customElement('ff-node-panel')
 export class FfNodePanel extends LitElement {
@@ -139,6 +145,19 @@ export class FfNodePanel extends LitElement {
   @property({ attribute: false })
   node?: FlowNode
 
+  /** What the node receives, shown above the config. */
+  @property({ attribute: false })
+  dataView?: DataView
+
+  /** Whether the flow can be run (passed on to the data view). */
+  @property({ type: Boolean })
+  canRun = false
+
+  // The config field that clicked input paths go into: the insertable
+  // field focused last, or the first insertable one.
+  @state()
+  private insertKey?: string
+
   // Raw JSON editor state for node types missing from the catalog.
   @state()
   private jsonDraft = ''
@@ -151,6 +170,7 @@ export class FfNodePanel extends LitElement {
     if (changed.has('node') && before?.id !== this.node?.id) {
       this.jsonDraft = JSON.stringify(this.node?.config ?? {}, null, 2)
       this.jsonError = undefined
+      this.insertKey = undefined
     }
   }
 
@@ -179,6 +199,13 @@ export class FfNodePanel extends LitElement {
         <dt>Type</dt>
         <dd>${node.type}</dd>
       </dl>
+      <ff-data-view
+        .view=${this.dataView}
+        .target=${this.dataView?.mode === 'input' ? this.insertTarget() : undefined}
+        ?canRun=${this.canRun}
+        @path-insert=${(e: CustomEvent<PathSegment[]>) =>
+          this.insertPath(e.detail)}
+      ></ff-data-view>
       <div class="field">
         <label for="name">Name</label>
         <input
@@ -274,6 +301,8 @@ export class FfNodePanel extends LitElement {
         </select>
       `
     }
+    // Focusing an insertable field makes it the target for clicked paths.
+    const onFocus = prop['x-insert'] ? () => (this.insertKey = key) : undefined
     if (prop['x-multiline']) {
       return html`
         <textarea
@@ -283,6 +312,7 @@ export class FfNodePanel extends LitElement {
           placeholder=${prop.default ?? ''}
           .value=${live(text)}
           @input=${onInput}
+          @focus=${onFocus}
         ></textarea>
       `
     }
@@ -294,8 +324,56 @@ export class FfNodePanel extends LitElement {
         placeholder=${prop.default ?? ''}
         .value=${live(text)}
         @input=${onInput}
+        @focus=${onFocus}
       />
     `
+  }
+
+  // insertTarget is the config field that clicked input paths go into.
+  private insertTarget(): (InsertTarget & { key: string }) | undefined {
+    const spec = nodeType(this.node?.type ?? '')
+    if (!spec) return undefined
+    const insertable = Object.entries(spec.config.properties).filter(
+      ([, p]) => p.type === 'string' && p['x-insert'],
+    ) as [string, StringProperty][]
+    const [key, prop] =
+      insertable.find(([k]) => k === this.insertKey) ?? insertable[0] ?? []
+    if (!key || !prop) return undefined
+    return { key, label: prop.title, style: prop['x-insert']! }
+  }
+
+  // insertPath writes a clicked input path into the target field: at the
+  // cursor for expressions and templates; replacing the value for a plain
+  // path field, which holds exactly one path.
+  private insertPath(segments: PathSegment[]) {
+    const node = this.node
+    const target = this.insertTarget()
+    if (!node || !target) return
+    const text = formatPath(segments, target.style)
+    if (!text) return
+    const el = this.renderRoot.querySelector<
+      HTMLInputElement | HTMLTextAreaElement
+    >(`#cfg-${target.key}`)
+    const current =
+      typeof node.config[target.key] === 'string'
+        ? (node.config[target.key] as string)
+        : ''
+    let next = text
+    let cursor = text.length
+    if (target.style !== 'path') {
+      const start = el?.selectionStart ?? current.length
+      const end = el?.selectionEnd ?? current.length
+      next = current.slice(0, start) + text + current.slice(end)
+      cursor = start + text.length
+    }
+    // Update the field right away so the cursor can be placed after the
+    // inserted text; the new config then comes back with the same value.
+    if (el) {
+      el.value = next
+      el.focus()
+      el.setSelectionRange(cursor, cursor)
+    }
+    this.setConfig(target.key, next)
   }
 
   // renderMap edits a string→string object as rows. Names are applied on
