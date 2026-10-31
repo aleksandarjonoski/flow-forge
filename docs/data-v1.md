@@ -202,10 +202,10 @@ Every node keeps the narrow property panel for quick edits. **Double-clicking a 
 - Unmapped required fields are marked, matching the load-time check.
 
 ### 7.3 Schema editing
-Used for `parse_json`'s schema and the transform's output schema:
+Used for `parse_json`'s schema and the transform's output schema. Slice 2 ships the JSON view and both generators in the property panel; the tree editor comes with the node editor (slice 4). In the JSON view, text that does not parse yet keeps the last valid schema, and every schema problem is listed.
 - **Tree editor**: field name, type, required, `enum`, description; nested objects and arrays.
-- **Generate from sample**: paste example JSON; a schema is generated (every field typed from the sample, all fields required) and can then be adjusted.
-- **Generate from last run**: the same, from the real data of the last test run.
+- **Generate from sample**: paste example JSON; a schema is generated (every field typed from the sample, all fields required) and can then be adjusted. Numbers are generated as `number`, never `integer`: one sample cannot show that a value is always whole. A `null` in the sample becomes type `null`, to be corrected by hand.
+- **Generate from last run**: the same, from the real data the node received in the last test run, at its `from` path (which must hold an object). Replacing an existing schema asks first.
 - **JSON view**: the raw schema, for copy/paste. Edits there are applied when they parse and pass §3.
 
 ### 7.4 Data view everywhere

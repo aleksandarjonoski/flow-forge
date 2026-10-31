@@ -141,3 +141,49 @@ describe('sameUpstream', () => {
     expect(sameUpstream(flow, flow, 'missing')).toBe(false)
   })
 })
+
+describe('dataView with a declared schema', () => {
+  // hello with a Parse JSON node between the trigger and the transform.
+  const parse = {
+    id: 'node-9',
+    type: 'parse_json',
+    name: 'Parse Order',
+    position: { x: 0, y: 0 },
+    config: {
+      from: 'body',
+      schema: {
+        type: 'object',
+        properties: { name: { type: 'string' }, qty: { type: 'integer' } },
+      },
+    },
+  }
+  const withParse: Flow = {
+    ...flow,
+    nodes: [...flow.nodes, parse],
+    edges: [
+      { id: 'edge-1', source: 'node-1', target: 'node-9' },
+      { id: 'edge-9', source: 'node-9', target: 'node-2' },
+      flow.edges[1],
+    ],
+  }
+
+  it('shows the declared fields without a run', () => {
+    expect(dataView(withParse, 'node-2')).toEqual({
+      mode: 'input',
+      from: { id: 'node-9', name: 'Parse Order' },
+      shape: {
+        type: 'object',
+        fields: { name: { type: 'string' }, qty: { type: 'integer' } },
+      },
+      source: 'declared',
+    })
+  })
+
+  it('falls back to "any" while the schema is incomplete', () => {
+    const broken = setNodeConfig(withParse, 'node-9', { schema: { type: 'x' } })
+    expect(dataView(broken, 'node-2')).toMatchObject({
+      source: 'type',
+      shape: { type: 'any' },
+    })
+  })
+})

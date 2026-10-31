@@ -161,9 +161,11 @@ export class FfDataView extends LitElement {
     const source =
       view.source === 'run'
         ? 'From the last test run.'
-        : view.mode === 'emits'
-          ? 'From the trigger type.'
-          : "From the previous node's type."
+        : view.source === 'declared'
+          ? `From the declared schema of ${view.from?.name ?? 'the previous node'}.`
+          : view.mode === 'emits'
+            ? 'From the trigger type.'
+            : "From the previous node's type."
     return html`
       <div class="source">
         ${source}

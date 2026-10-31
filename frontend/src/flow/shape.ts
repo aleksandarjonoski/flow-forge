@@ -1,6 +1,9 @@
+import type { Schema } from './schema.ts'
+
 // Shapes describe what data looks like, for the input data view (docs/
 // design.md, "Input data view"). They come from a node type's output
-// contract or are inferred from real data seen in a test run.
+// contract, from a declared schema (docs/data-v1.md), or are inferred from
+// real data seen in a test run.
 
 export type Shape =
   | {
@@ -11,7 +14,10 @@ export type Shape =
       values?: Shape
     }
   | { type: 'array'; items?: Shape }
-  | { type: 'string' | 'number' | 'boolean' | 'null'; sample?: unknown }
+  | {
+      type: 'string' | 'number' | 'integer' | 'boolean' | 'null'
+      sample?: unknown
+    }
   | { type: 'any'; note?: string }
 
 /** Infers a shape from a value, keeping primitive values as samples. */
@@ -104,4 +110,62 @@ export function formatPath(
       }
       return segments.join('.')
   }
+}
+
+/** The shape a declared schema describes. */
+export function shapeFromSchema(schema: Schema): Shape {
+  switch (schema.type) {
+    case 'object': {
+      const fields: Record<string, Shape> = {}
+      for (const [k, v] of Object.entries(schema.properties ?? {})) {
+        fields[k] = shapeFromSchema(v)
+      }
+      return { type: 'object', fields }
+    }
+    case 'array':
+      return schema.items
+        ? { type: 'array', items: shapeFromSchema(schema.items) }
+        : { type: 'array' }
+    default:
+      return { type: schema.type }
+  }
+}
+
+/**
+ * Generates a schema from a shape (inferred from a sample or a test run):
+ * every field typed as seen and marked required, ready to be adjusted
+ * (docs/data-v1.md §7.3). Numbers become "number", never "integer", since
+ * one sample cannot show that a value is always whole.
+ */
+export function schemaFromShape(shape: Shape): Schema {
+  switch (shape.type) {
+    case 'object': {
+      const fields = Object.entries(shape.fields ?? {})
+      const properties: Record<string, Schema> = {}
+      for (const [k, v] of fields) properties[k] = schemaFromShape(v)
+      return fields.length
+        ? { type: 'object', properties, required: fields.map(([k]) => k) }
+        : { type: 'object' }
+    }
+    case 'array':
+      return shape.items
+        ? { type: 'array', items: schemaFromShape(shape.items) }
+        : { type: 'array' }
+    case 'integer':
+      return { type: 'number' }
+    case 'any':
+      return { type: 'object' }
+    default:
+      return { type: shape.type }
+  }
+}
+
+/** The part of a shape at a dot path, if the path leads through objects. */
+export function shapeAt(shape: Shape, path: string[]): Shape | undefined {
+  let cur: Shape | undefined = shape
+  for (const key of path) {
+    if (cur?.type !== 'object') return undefined
+    cur = cur.fields?.[key]
+  }
+  return cur
 }

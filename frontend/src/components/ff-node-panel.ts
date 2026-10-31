@@ -6,11 +6,19 @@ import {
   nodeType,
   validateConfig,
   type ConfigProperty,
+  type SchemaProperty,
   type StringMapProperty,
   type StringProperty,
 } from '../flow/node-types.ts'
 import type { DataView } from '../flow/data-view.ts'
-import { formatPath, type PathSegment } from '../flow/shape.ts'
+import { parseSchema, problemText, type Schema } from '../flow/schema.ts'
+import {
+  formatPath,
+  inferShape,
+  schemaFromShape,
+  shapeAt,
+  type PathSegment,
+} from '../flow/shape.ts'
 import type { FlowNode } from '../flow/types.ts'
 import './ff-data-view.ts'
 import type { InsertTarget } from './ff-data-view.ts'
@@ -132,6 +140,33 @@ export class FfNodePanel extends LitElement {
       color: #d33;
     }
 
+    textarea.schema {
+      min-height: 12rem;
+    }
+
+    .problems {
+      margin: 0;
+      padding-left: 1.25rem;
+    }
+
+    .row-actions {
+      display: flex;
+      gap: 0.375rem;
+      flex-wrap: wrap;
+    }
+
+    .sample {
+      display: grid;
+      gap: 0.25rem;
+      padding: 0.5rem;
+      border: 1px dashed color-mix(in srgb, currentColor 30%, transparent);
+      border-radius: 4px;
+    }
+
+    .sample button {
+      justify-self: start;
+    }
+
     .close {
       border: none;
       background: none;
@@ -165,12 +200,36 @@ export class FfNodePanel extends LitElement {
   @state()
   private jsonError?: string
 
+  // Schema fields are edited as JSON text; the text is kept here while it
+  // does not parse, so typing is never interrupted.
+  @state()
+  private schemaDrafts = new Map<string, string>()
+
+  @state()
+  private schemaJSONError?: string
+
+  // "Generate from sample": whether the sample box is open, its text, and
+  // why the last attempt failed.
+  @state()
+  private sampleOpen = false
+
+  @state()
+  private sampleText = ''
+
+  @state()
+  private sampleError?: string
+
   willUpdate(changed: PropertyValues<this>) {
     const before = changed.get('node')
     if (changed.has('node') && before?.id !== this.node?.id) {
       this.jsonDraft = JSON.stringify(this.node?.config ?? {}, null, 2)
       this.jsonError = undefined
       this.insertKey = undefined
+      this.schemaDrafts = new Map()
+      this.schemaJSONError = undefined
+      this.sampleOpen = false
+      this.sampleText = ''
+      this.sampleError = undefined
     }
   }
 
@@ -252,7 +311,9 @@ export class FfNodePanel extends LitElement {
         ${
           prop.type === 'string'
             ? this.renderString(id, key, prop, value, error)
-            : this.renderMap(key, prop, value)
+            : prop.type === 'schema'
+              ? this.renderSchema(id, key, prop, value)
+              : this.renderMap(key, prop, value)
         }
         ${
           prop.description
@@ -260,12 +321,172 @@ export class FfNodePanel extends LitElement {
             : nothing
         }
         ${
-          error
+          // Schema fields list all their problems themselves.
+          error && prop.type !== 'schema'
             ? html`<div class="error" id="${id}-error">${error}</div>`
             : nothing
         }
       </div>
     `
+  }
+
+  // renderSchema edits a declared schema (docs/data-v1.md §7.3): as JSON
+  // text, applied whenever it parses; or generated from a pasted sample or
+  // from the data of the last test run.
+  private renderSchema(
+    id: string,
+    key: string,
+    prop: SchemaProperty,
+    value: unknown,
+  ) {
+    const text =
+      this.schemaDrafts.get(key) ??
+      (value === undefined ? '' : JSON.stringify(value, null, 2))
+    const problems =
+      value === undefined || this.schemaJSONError ? [] : schemaProblems(value)
+    const fromRun = this.runSampleSchema()
+    return html`
+      <textarea
+        id=${id}
+        class="schema"
+        spellcheck="false"
+        placeholder='{ "type": "object", "properties": { … } }'
+        aria-invalid=${this.schemaJSONError || problems.length ? 'true' : 'false'}
+        .value=${live(text)}
+        @input=${(e: Event) => this.onSchemaInput(key, inputValue(e))}
+      ></textarea>
+      ${
+        this.schemaJSONError
+          ? html`<div class="error">${this.schemaJSONError}</div>`
+          : nothing
+      }
+      ${
+        problems.length
+          ? html`<ul class="error problems">
+              ${problems.map((p) => html`<li>${p}</li>`)}
+            </ul>`
+          : nothing
+      }
+      <div class="row-actions">
+        <button
+          @click=${() => {
+            this.sampleOpen = !this.sampleOpen
+            this.sampleError = undefined
+          }}
+        >
+          Generate from sample…
+        </button>
+        <button
+          ?disabled=${!fromRun}
+          title=${
+            fromRun
+              ? 'Use the data this node received in the last test run'
+              : 'Run the flow first; the value at "From" must be an object'
+          }
+          @click=${() => fromRun && this.applySchema(key, fromRun, prop)}
+        >
+          Generate from last run
+        </button>
+      </div>
+      ${
+        this.sampleOpen
+          ? html`<div class="sample">
+              <label for="sample">Example JSON</label>
+              <textarea
+                id="sample"
+                spellcheck="false"
+                placeholder='{ "name": "ada", "address": { "city": "Skopje" } }'
+                .value=${live(this.sampleText)}
+                @input=${(e: Event) => {
+                  this.sampleText = inputValue(e)
+                  this.sampleError = undefined
+                }}
+              ></textarea>
+              ${
+                this.sampleError
+                  ? html`<div class="error">${this.sampleError}</div>`
+                  : nothing
+              }
+              <button @click=${() => this.generateFromSample(key, prop)}>
+                Generate
+              </button>
+            </div>`
+          : nothing
+      }
+    `
+  }
+
+  private onSchemaInput(key: string, text: string) {
+    this.schemaDrafts = new Map(this.schemaDrafts).set(key, text)
+    if (text.trim() === '') {
+      this.schemaJSONError = undefined
+      this.setConfig(key, undefined)
+      return
+    }
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(text)
+    } catch {
+      this.schemaJSONError =
+        'Not valid JSON yet; the last valid schema is kept.'
+      return
+    }
+    this.schemaJSONError = undefined
+    this.setConfig(key, parsed)
+  }
+
+  private generateFromSample(key: string, prop: SchemaProperty) {
+    let sample: unknown
+    try {
+      sample = JSON.parse(this.sampleText)
+    } catch {
+      this.sampleError = 'The example is not valid JSON.'
+      return
+    }
+    if (
+      typeof sample !== 'object' ||
+      sample === null ||
+      Array.isArray(sample)
+    ) {
+      this.sampleError = 'The example must be a JSON object.'
+      return
+    }
+    if (this.applySchema(key, schemaFromShape(inferShape(sample)), prop)) {
+      this.sampleOpen = false
+      this.sampleText = ''
+    }
+  }
+
+  // applySchema replaces the schema, asking first if one is already set.
+  // Returns whether it was applied.
+  private applySchema(key: string, schema: Schema, prop: SchemaProperty) {
+    const current = this.node?.config[key]
+    if (
+      current !== undefined &&
+      !confirm(`Replace the current ${prop.title.toLowerCase()}?`)
+    ) {
+      return false
+    }
+    this.schemaDrafts = new Map(this.schemaDrafts).set(
+      key,
+      JSON.stringify(schema, null, 2),
+    )
+    this.schemaJSONError = undefined
+    this.setConfig(key, schema)
+    return true
+  }
+
+  // runSampleSchema is a schema generated from the data this node received
+  // in the last test run, at its "from" path; undefined when there is none.
+  private runSampleSchema(): Schema | undefined {
+    const view = this.dataView
+    if (view?.mode !== 'input' || view.source !== 'run' || !view.shape) {
+      return undefined
+    }
+    const from = this.node?.config.from
+    const path = typeof from === 'string' && from ? from.split('.') : []
+    const shape = shapeAt(view.shape, path)
+    return shape?.type === 'object' ? schemaFromShape(shape) : undefined
   }
 
   private renderString(
@@ -503,6 +724,16 @@ export class FfNodePanel extends LitElement {
       new CustomEvent('node-change', { detail, bubbles: true, composed: true }),
     )
   }
+}
+
+// schemaProblems lists everything wrong with a declared schema, including a
+// top level that is not an object.
+function schemaProblems(value: unknown): string[] {
+  const { schema, problems } = parseSchema(value)
+  if (problems.length) return problems.map(problemText)
+  return schema?.type === 'object'
+    ? []
+    : ['The top level must be of type object.']
 }
 
 function inputValue(e: Event): string {

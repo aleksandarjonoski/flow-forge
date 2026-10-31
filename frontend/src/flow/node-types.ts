@@ -1,3 +1,4 @@
+import { parseSchema, problemText } from './schema.ts'
 import type { InsertStyle, Shape } from './shape.ts'
 
 // The node type catalog: what the editor knows about each built-in node type.
@@ -25,7 +26,14 @@ export interface StringMapProperty {
   additionalProperties: { type: 'string' }
 }
 
-export type ConfigProperty = StringProperty | StringMapProperty
+/** A declared data schema (docs/data-v1.md §3), edited as JSON in the panel. */
+export interface SchemaProperty {
+  type: 'schema'
+  title: string
+  description?: string
+}
+
+export type ConfigProperty = StringProperty | StringMapProperty | SchemaProperty
 
 export interface ConfigSchema {
   type: 'object'
@@ -46,9 +54,11 @@ export interface NodeTypeSpec {
   samplePayload?: () => Record<string, unknown>
   /**
    * What the node outputs, as far as its type knows (engine-v1.md §11);
-   * "input" for nodes that pass their input through unchanged.
+   * "input" for nodes that pass their input through unchanged; "declared"
+   * for nodes whose output matches the schema in their `schema` config
+   * (docs/data-v1.md §4).
    */
-  output: Shape | 'input'
+  output: Shape | 'input' | 'declared'
 }
 
 // Shapes shared by several contracts.
@@ -209,6 +219,33 @@ export const NODE_TYPES: readonly NodeTypeSpec[] = [
     },
     output: 'input',
   },
+  {
+    type: 'parse_json',
+    label: 'Parse JSON',
+    kind: 'action',
+    description:
+      'Parses JSON and checks it against a schema; outputs exactly the schema fields.',
+    config: {
+      type: 'object',
+      properties: {
+        from: {
+          type: 'string',
+          title: 'From',
+          description:
+            'Dot path into the input of the value to parse (e.g. body). Empty: the whole input.',
+          'x-insert': 'path',
+        },
+        schema: {
+          type: 'schema',
+          title: 'Schema',
+          description:
+            'What the data must look like. Extra fields are dropped; a mismatch stops the run.',
+        },
+      },
+      required: ['schema'],
+    },
+    output: 'declared',
+  },
 ]
 
 const byType = new Map(NODE_TYPES.map((t) => [t.type, t]))
@@ -235,7 +272,11 @@ export function validateConfig(
     const value = config[key]
     if (value === undefined) continue
     const error =
-      prop.type === 'string' ? checkString(prop, value) : checkMap(value)
+      prop.type === 'string'
+        ? checkString(prop, value)
+        : prop.type === 'schema'
+          ? checkSchema(value)
+          : checkMap(value)
     if (error) errors[key] = error
   }
   return errors
@@ -254,6 +295,18 @@ function checkString(prop: StringProperty, value: unknown): string | undefined {
   if (prop.format === 'uri' && !isHttpURL(value)) {
     return 'Must be an absolute http(s) URL.'
   }
+  return undefined
+}
+
+// checkSchema reports the first problem of a declared schema, with a count
+// of the rest; its top level must be an object (docs/data-v1.md §3).
+function checkSchema(value: unknown): string | undefined {
+  const { schema, problems } = parseSchema(value)
+  if (problems.length) {
+    const more = problems.length > 1 ? ` (and ${problems.length - 1} more)` : ''
+    return `${problemText(problems[0])}${more}`
+  }
+  if (schema?.type !== 'object') return 'The top level must be of type object.'
   return undefined
 }
 

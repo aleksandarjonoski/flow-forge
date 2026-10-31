@@ -390,8 +390,8 @@ Designed in [data-v1.md](data-v1.md); built in this order:
 | # | Slice | Notes | Status |
 |---|---|---|---|
 | 1 | Schema subset | `backend/internal/schema` + TypeScript twin: validate strictly, drop extra fields, report every problem with its path (data-v1.md §3); both run the shared `testdata/cases.json` | ✅ done |
-| 2 | `parse_json` node | 6th built-in node; schema config field with "Generate from sample / last run"; input data view shows declared schemas (§4, §7.3–7.4) | next |
-| 3 | Transform mapping mode | `schema` + `mapping` config, load-time checks, field-named errors (§5) | |
+| 2 | `parse_json` node | 6th built-in node; schema config field with "Generate from sample / last run"; input data view shows declared schemas (§4, §7.3–7.4) | ✅ done |
+| 3 | Transform mapping mode | `schema` + `mapping` config, load-time checks, field-named errors (§5) | next |
 | 4 | Node editor | Wide overlay with General / Input / Output tabs for every node; schema tree editor (§7.1, §7.3) | |
 | 5 | Visual mapper | Mapping tab: available data ↔ output schema with solid/dashed lines, drag to map, inline expressions (§7.2) | |
 

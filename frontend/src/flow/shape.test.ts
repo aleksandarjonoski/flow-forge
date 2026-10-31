@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { formatPath, hasUnknowns, inferShape } from './shape.ts'
+import {
+  formatPath,
+  hasUnknowns,
+  inferShape,
+  schemaFromShape,
+  shapeAt,
+  shapeFromSchema,
+} from './shape.ts'
 
 describe('inferShape', () => {
   it('describes nested data and keeps primitive samples', () => {
@@ -66,5 +73,59 @@ describe('formatPath', () => {
     expect(formatPath(['items', 0], 'path')).toBeUndefined()
     expect(formatPath(['a.b'], 'path')).toBeUndefined()
     expect(formatPath([], 'path')).toBeUndefined()
+  })
+})
+
+describe('schemas and shapes', () => {
+  it('generates a schema from a sample, every field required', () => {
+    const shape = inferShape({
+      id: 7,
+      tags: ['a'],
+      customer: { email: 'x' },
+      note: null,
+    })
+    expect(schemaFromShape(shape)).toEqual({
+      type: 'object',
+      properties: {
+        id: { type: 'number' },
+        tags: { type: 'array', items: { type: 'string' } },
+        customer: {
+          type: 'object',
+          properties: { email: { type: 'string' } },
+          required: ['email'],
+        },
+        note: { type: 'null' },
+      },
+      required: ['id', 'tags', 'customer', 'note'],
+    })
+    expect(schemaFromShape(inferShape({}))).toEqual({ type: 'object' })
+  })
+
+  it('turns a schema back into a shape', () => {
+    expect(
+      shapeFromSchema({
+        type: 'object',
+        properties: {
+          n: { type: 'integer' },
+          list: { type: 'array', items: { type: 'string' } },
+          any: { type: 'array' },
+        },
+      }),
+    ).toEqual({
+      type: 'object',
+      fields: {
+        n: { type: 'integer' },
+        list: { type: 'array', items: { type: 'string' } },
+        any: { type: 'array' },
+      },
+    })
+  })
+
+  it('finds the part of a shape at a path', () => {
+    const shape = inferShape({ body: { user: { name: 'a' } } })
+    expect(shapeAt(shape, ['body', 'user'])).toEqual(inferShape({ name: 'a' }))
+    expect(shapeAt(shape, [])).toBe(shape)
+    expect(shapeAt(shape, ['body', 'user', 'name', 'x'])).toBeUndefined()
+    expect(shapeAt(shape, ['nope'])).toBeUndefined()
   })
 })

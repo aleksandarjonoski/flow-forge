@@ -13,6 +13,7 @@ describe('catalog', () => {
       'http_request',
       'transform',
       'log',
+      'parse_json',
     ])
   })
 
@@ -95,6 +96,20 @@ describe('validateConfig', () => {
     expect(validateConfig(s, { url, headers: 'A: b' })).toEqual({
       headers: 'Must be a set of name/value pairs.',
     })
+  })
+
+  it('checks declared schemas', () => {
+    const s = schema('parse_json')
+    expect(validateConfig(s, {})).toEqual({ schema: 'Required.' })
+    expect(validateConfig(s, { schema: { type: 'object' } })).toEqual({})
+    expect(validateConfig(s, { schema: { type: 'array' } })).toEqual({
+      schema: 'The top level must be of type object.',
+    })
+    expect(
+      validateConfig(s, {
+        schema: { type: 'object', properties: { a: {}, b: { type: 'x' } } },
+      }),
+    ).toEqual({ schema: 'a: type is required (and 1 more)' })
   })
 
   it('rejects non-text values and ignores unknown keys', () => {

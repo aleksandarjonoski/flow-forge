@@ -1,12 +1,14 @@
 import type { TraceEvent } from '../api/client.ts'
 import { nodeRuns } from '../api/trace.ts'
 import { nodeType } from './node-types.ts'
-import { inferShape, type Shape } from './shape.ts'
+import { parseSchema } from './schema.ts'
+import { inferShape, shapeFromSchema, type Shape } from './shape.ts'
 import { isTrigger, type Flow, type FlowNode } from './types.ts'
 
 // What the input data view shows for a node (docs/design.md, "Input data
-// view"): the shape of the data it receives, from the last test run when
-// that still applies, otherwise from the previous node's output contract.
+// view"; docs/data-v1.md §7.4): the shape of the data it receives, from the
+// last test run when that still applies, else from a declared schema, else
+// from the previous node's output contract.
 
 /** A finished test run: the flow as it was run and its trace. */
 export interface LastRun {
@@ -22,7 +24,7 @@ export interface DataView {
   /** The data's shape; undefined when nothing is connected. */
   shape?: Shape
   /** Where the shape comes from. */
-  source: 'run' | 'type' | 'none'
+  source: 'run' | 'declared' | 'type' | 'none'
 }
 
 export function dataView(
@@ -45,14 +47,14 @@ export function dataView(
 }
 
 // outputOf returns what a node outputs: its real output in the last run, if
-// that run still matches the flow up to this node; otherwise its type's
-// contract, following pass-through nodes upstream.
+// that run still matches the flow up to this node; otherwise its declared
+// schema or its type's contract, following pass-through nodes upstream.
 function outputOf(
   flow: Flow,
   node: FlowNode,
   lastRun: LastRun | undefined,
   seen: Set<string>,
-): { shape: Shape; source: 'run' | 'type' } {
+): { shape: Shape; source: 'run' | 'declared' | 'type' } {
   if (lastRun && sameUpstream(flow, lastRun.flow, node.id)) {
     const run = nodeRuns(lastRun.trace).find((r) => r.nodeId === node.id)
     if (run && (run.status === 'completed' || run.status === 'trigger')) {
@@ -62,6 +64,15 @@ function outputOf(
   const contract = nodeType(node.type)?.output ?? {
     type: 'any',
     note: 'unknown node type',
+  }
+  if (contract === 'declared') {
+    const { schema } = parseSchema(node.config.schema)
+    return schema?.type === 'object'
+      ? { shape: shapeFromSchema(schema), source: 'declared' }
+      : {
+          shape: { type: 'any', note: 'its schema is not complete yet' },
+          source: 'type',
+        }
   }
   if (contract !== 'input') return { shape: contract, source: 'type' }
 
