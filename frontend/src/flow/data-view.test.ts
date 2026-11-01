@@ -8,10 +8,21 @@ import {
   outputView,
   sameUpstream,
 } from './data-view.ts'
-import { nodeType } from './node-types.ts'
+import type { Shape } from './shape.ts'
 import type { Flow } from './types.ts'
 
 const flow: Flow = hello
+
+// The http_trigger contract for a path without parameters.
+const triggerShape: Shape = {
+  type: 'object',
+  fields: {
+    headers: { type: 'object', values: { type: 'string' } },
+    query: { type: 'object', values: { type: 'string' } },
+    params: { type: 'object', fields: {} },
+    body: { type: 'any', note: 'whatever the caller sends' },
+  },
+}
 
 // The trace of a hello run with body {name: "ada"}.
 const ev = (e: Partial<TraceEvent> & Pick<TraceEvent, 'kind'>): TraceEvent => ({
@@ -50,7 +61,7 @@ describe('dataView without a run', () => {
     expect(dataView(flow, 'node-2')).toEqual({
       mode: 'input',
       from: { id: 'node-1', name: 'HTTP Trigger' },
-      shape: nodeType('http_trigger')!.output,
+      shape: triggerShape,
       source: 'type',
     })
   })
@@ -59,7 +70,22 @@ describe('dataView without a run', () => {
     expect(dataView(flow, 'node-1')).toMatchObject({
       mode: 'emits',
       source: 'type',
-      shape: nodeType('http_trigger')!.output,
+      shape: triggerShape,
+    })
+  })
+
+  it('shows the path parameters of an http_trigger', () => {
+    const f = setNodeConfig(flow, 'node-1', {
+      path: '/customers/{customer}/orders/{id}',
+    })
+    const view = dataView(f, 'node-2')
+    expect(view?.shape).toMatchObject({
+      fields: {
+        params: {
+          type: 'object',
+          fields: { customer: { type: 'string' }, id: { type: 'string' } },
+        },
+      },
     })
   })
 

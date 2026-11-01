@@ -61,6 +61,10 @@ func TestHTTPTrigger_InitErrors(t *testing.T) {
 	}{
 		{"missing path", map[string]any{}, svc, `"path" is required`},
 		{"relative path", map[string]any{"path": "webhook"}, svc, "must start with /"},
+		{"reserved path", map[string]any{"path": "/_flowforge/ready"}, svc, "keeps for itself"},
+		{"reserved prefix", map[string]any{"path": "/_flowforge"}, svc, "keeps for itself"},
+		{"partial parameter", map[string]any{"path": "/orders/id-{id}"}, svc, "whole parameter"},
+		{"repeated parameter", map[string]any{"path": "/a/{id}/b/{id}"}, svc, "appears twice"},
 		{"non-string method", map[string]any{"path": "/a", "method": 1}, svc, "must be a string"},
 		{"empty method", map[string]any{"path": "/a", "method": ""}, svc, "must not be empty"},
 		{"nil services", map[string]any{"path": "/a"}, nil, "no HTTP mux"},
@@ -104,6 +108,24 @@ func TestHTTPTrigger_JSONRequest(t *testing.T) {
 	}
 	if h := p["headers"].(map[string]any); h["X-Tag"] != "one, two" {
 		t.Errorf("X-Tag header = %v, want %q", h["X-Tag"], "one, two")
+	}
+}
+
+func TestHTTPTrigger_PathParams(t *testing.T) {
+	mux, got := startTrigger(t, map[string]any{"path": "/customers/{customer}/orders/{id}", "method": "GET"}, nil)
+	if rec := do(mux, "GET", "/customers/c%2F1/orders/42", "", ""); rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d (body %q)", rec.Code, rec.Body)
+	}
+	want := map[string]any{"customer": "c/1", "id": "42"}
+	if p := (*got)[0]; !reflect.DeepEqual(p["params"], want) {
+		t.Errorf("params = %v, want %v", p["params"], want)
+	}
+
+	// Without parameters, params is empty, not missing.
+	mux, got = startTrigger(t, map[string]any{"path": "/plain"}, nil)
+	do(mux, "POST", "/plain", "", "")
+	if p := (*got)[0]; !reflect.DeepEqual(p["params"], map[string]any{}) {
+		t.Errorf("params = %#v, want {}", p["params"])
 	}
 }
 

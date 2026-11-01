@@ -430,8 +430,8 @@ Designed in [prod-v1.md](prod-v1.md); built in this order:
 | # | Slice | Description | Status |
 |---|---|---|---|
 | 1 | API token auth | `FLOWFORGE_API_TOKEN` or `-api-token-file` (never a flag value), `flowforge token`; `401` on `/api/` except health; refuse a non-loopback editor listener without a token unless `-insecure-no-auth`; sign-in dialog in the editor. | ✅ done |
-| 2 | Health and readiness | `/_flowforge/health` (liveness) and `/_flowforge/ready` (`503` until boot is done and during shutdown) on the flows listener and in `flowforge run`; `/_flowforge/` reserved for trigger paths. | |
-| 3 | Path parameters | `/orders/{id}` segments in `http_trigger`, `params` in the payload, literal-beats-parameter matching, conflicts by route shape. | |
+| 2 | Health and readiness | `/_flowforge/health` (liveness) and `/_flowforge/ready` (`503` until boot is done and during shutdown) on the flows listener and in `flowforge run`; `/_flowforge/` reserved for trigger paths. | ✅ done |
+| 3 | Path parameters | `/orders/{id}` segments in `http_trigger`, `params` in the payload, literal-beats-parameter matching, conflicts by route shape. | ✅ done |
 | 4 | Request/response | `http_trigger` `respond: "flow"` + `timeout`; new `http_response` node (status/body expressions or mapping mode, headers), sent when it runs, one per execution; `500`/`504` fallbacks without internal details; response shown in test runs. | |
 | 5 | Variables and secrets | Server variables from `FLOWFORGE_VAR_*` or the store, `/api/variables`; `vars.X`, `{{.vars.X}}`, `${vars.X}` resolved at compile; `env` removed from expressions; secret values never returned and masked in traces and logs. | |
 | 6 | Variables in the editor | Variables tab, `vars` as a source in the data view and mapper, offer to redeploy flows using a changed variable. | |

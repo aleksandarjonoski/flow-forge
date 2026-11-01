@@ -214,6 +214,21 @@ func (h *Host) Status(id string) Status {
 	return st
 }
 
+// Counts returns how many flows run and how many failed to start.
+func (h *Host) Counts() (running, failed int) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, e := range h.flows {
+		switch e.state {
+		case Running:
+			running++
+		case Failed:
+			failed++
+		}
+	}
+	return running, failed
+}
+
 // Shutdown stops every running flow and waits for their executions. Flows
 // stay deployed, so the next Boot starts them again.
 func (h *Host) Shutdown() error {

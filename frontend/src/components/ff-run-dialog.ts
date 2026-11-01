@@ -184,7 +184,7 @@ export class FfRunDialog extends LitElement {
   private draft(trigger: FlowNode): string {
     const saved = this.drafts.get(trigger.id)
     if (saved !== undefined) return saved
-    const sample = nodeType(trigger.type)?.samplePayload?.() ?? {}
+    const sample = nodeType(trigger.type)?.samplePayload?.(trigger.config) ?? {}
     return JSON.stringify(sample, null, 2)
   }
 

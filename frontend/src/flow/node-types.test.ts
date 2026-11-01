@@ -4,6 +4,7 @@ import {
   NODE_TYPES,
   activeMode,
   nodeType,
+  pathParams,
   validateConfig,
   validateNode,
 } from './node-types.ts'
@@ -36,14 +37,24 @@ describe('catalog', () => {
         t.kind === 'trigger',
       )
     }
-    expect(nodeType('http_trigger')!.samplePayload!()).toEqual({
+    expect(
+      nodeType('http_trigger')!.samplePayload!({ path: '/orders/{id}' }),
+    ).toEqual({
       headers: { 'Content-Type': 'application/json' },
       query: {},
+      params: { id: '' },
       body: {},
     })
-    expect(nodeType('cron_trigger')!.samplePayload!().firedAt).toMatch(
+    expect(nodeType('cron_trigger')!.samplePayload!({}).firedAt).toMatch(
       /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/,
     )
+  })
+
+  it('reads the parameters of a trigger path', () => {
+    expect(pathParams('/c/{customer}/o/{id}')).toEqual(['customer', 'id'])
+    expect(pathParams('/orders')).toEqual([])
+    expect(pathParams('/o/id-{id}/{1x}/{ok}')).toEqual(['ok'])
+    expect(pathParams(undefined)).toEqual([])
   })
 
   it('only lists required keys that are properties', () => {
@@ -78,6 +89,12 @@ describe('validateConfig', () => {
       path: 'Must start with /.',
       method: 'Must be one of GET, POST, PUT, PATCH, DELETE.',
     })
+    expect(
+      validateConfig(schema('http_trigger'), { path: '/_flowforge/ready' }),
+    ).toEqual({ path: 'Paths under /_flowforge/ are reserved.' })
+    expect(
+      validateConfig(schema('http_trigger'), { path: '/_flowforgery' }),
+    ).toEqual({})
     expect(
       validateConfig(schema('http_request'), { url: '/relative' }),
     ).toEqual({ url: 'Must be an absolute http(s) URL.' })

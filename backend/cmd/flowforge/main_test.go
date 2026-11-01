@@ -95,6 +95,15 @@ func TestServe_HelloFlow(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- serve(ctx, cf, svc, ln, sink) }()
+	(&server{flows: "http://" + ln.Addr().String()}).waitReady(t)
+	var ready struct {
+		Status string
+		Flows  struct{ Running, Failed int }
+	}
+	if code := call(t, "GET", "http://"+ln.Addr().String()+"/_flowforge/ready", "", &ready); code != 200 ||
+		ready.Status != "ready" || ready.Flows.Running != 1 {
+		t.Errorf("ready = %d %+v", code, ready)
+	}
 
 	resp, err := http.Post("http://"+ln.Addr().String()+"/webhook", "application/json", strings.NewReader(`{"name":"ada"}`))
 	if err != nil {
@@ -175,7 +184,28 @@ func startServerConfig(t *testing.T, cfg serverConfig) *server {
 	}
 	go func() { s.done <- runServer(ctx, cfg, apiLn, flowsLn) }()
 	t.Cleanup(func() { s.stop(t) })
+	s.waitReady(t)
 	return s
+}
+
+// waitReady waits until the server's boot is done, as a load balancer
+// would: until /_flowforge/ready answers 200.
+func (s *server) waitReady(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		resp, err := http.Get(s.flows + "/_flowforge/ready")
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("server not ready after 5s (last: %v)", err)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 // stop shuts the server down and checks it returned cleanly. Safe to call
@@ -185,6 +215,9 @@ func (s *server) stop(t *testing.T) {
 	if s.done == nil {
 		return
 	}
+	// The client may hold connections it dialed but never used; the server
+	// would wait out its shutdown grace for them.
+	http.DefaultClient.CloseIdleConnections()
 	s.cancel()
 	select {
 	case err := <-s.done:
@@ -450,5 +483,43 @@ func TestRunServer_Token(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("flows with the token = %d, want 200", resp.StatusCode)
+	}
+}
+
+// TestRunServer_Probes checks the probes on the flows listener: counts of
+// running and failed flows, and that a failed flow keeps the server ready.
+func TestRunServer_Probes(t *testing.T) {
+	dir := t.TempDir()
+	s := startServer(t, dir)
+	flowJSON, err := os.ReadFile(helloFlow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call(t, "POST", s.api+"/api/flows", `{"flow": `+string(flowJSON)+`}`, nil)
+	call(t, "POST", s.api+"/api/flows/flow-hello/start", "", nil)
+	// A second flow on the same route fails to start.
+	clash := strings.Replace(string(flowJSON), `"flow-hello"`, `"flow-clash"`, 1)
+	call(t, "POST", s.api+"/api/flows", `{"flow": `+clash+`}`, nil)
+	var st struct{ State string }
+	call(t, "POST", s.api+"/api/flows/flow-clash/start", "", &st)
+	if st.State != "failed" {
+		t.Fatalf("clashing flow = %q, want failed", st.State)
+	}
+
+	var health map[string]string
+	if code := call(t, "GET", s.flows+"/_flowforge/health", "", &health); code != 200 || health["status"] != "ok" {
+		t.Errorf("health = %d %v", code, health)
+	}
+	var ready struct {
+		Status string
+		Flows  struct{ Running, Failed int }
+	}
+	code := call(t, "GET", s.flows+"/_flowforge/ready", "", &ready)
+	if code != 200 || ready.Status != "ready" || ready.Flows.Running != 1 || ready.Flows.Failed != 1 {
+		t.Errorf("ready = %d %+v, want 200 with 1 running and 1 failed", code, ready)
+	}
+	// The probes are not on the editor listener.
+	if code := call(t, "GET", s.api+"/_flowforge/ready", "", nil); code == 200 {
+		t.Errorf("ready on the editor listener = %d", code)
 	}
 }

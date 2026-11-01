@@ -31,6 +31,7 @@ import (
 	"github.com/aleksandarjonoski/flow-forge/backend/internal/api"
 	"github.com/aleksandarjonoski/flow-forge/backend/internal/engine"
 	"github.com/aleksandarjonoski/flow-forge/backend/internal/flow"
+	"github.com/aleksandarjonoski/flow-forge/backend/internal/health"
 	"github.com/aleksandarjonoski/flow-forge/backend/internal/history"
 	"github.com/aleksandarjonoski/flow-forge/backend/internal/host"
 	_ "github.com/aleksandarjonoski/flow-forge/backend/internal/nodes" // register built-in nodes
@@ -264,11 +265,13 @@ type serverConfig struct {
 	token string // API token; empty serves the API without authentication
 }
 
-// runServer opens the store in cfg.dir, starts the deployed flows and serves
-// the editor API on apiLn and the flows on flowsLn until ctx is cancelled.
-// Then both listeners stop accepting requests, the flows stop (staying
-// deployed for the next start), the run history is flushed and the store
-// closes (server-v1.md §4.5). It closes both listeners.
+// runServer opens the store in cfg.dir and serves the editor API on apiLn
+// and the flows on flowsLn, starting the deployed flows meanwhile, until ctx
+// is cancelled. While the flows start, /_flowforge/ready and the API answer
+// 503 (prod-v1.md §4). On shutdown readiness goes 503, both listeners stop
+// accepting requests, the flows stop (staying deployed for the next start),
+// the run history is flushed and the store closes (server-v1.md §4.5). It
+// closes both listeners.
 func runServer(ctx context.Context, cfg serverConfig, apiLn, flowsLn net.Listener) error {
 	dir := cfg.dir
 	st, err := store.Open(dir)
@@ -287,12 +290,33 @@ func runServer(ctx context.Context, cfg serverConfig, apiLn, flowsLn net.Listene
 			engine.NewRunLogSink(slog.Default(), slog.String("flow", flowID), slog.Int64("revision", revision)),
 		)
 	}})
+	probes := health.New(func() health.Counts {
+		running, failed := h.Counts()
+		return health.Counts{Running: running, Failed: failed}
+	})
+
+	// Serve from the start, so probes see "starting" during the boot.
+	srvCtx, stopServing := context.WithCancel(context.Background())
+	defer stopServing()
+	stopWatch := context.AfterFunc(ctx, func() {
+		probes.SetStopping()
+		stopServing()
+	})
+	defer stopWatch()
+	srvDone := make(chan error, 1)
+	go func() {
+		srvDone <- serveHTTP(srvCtx, []listener{
+			{apiLn, booting(probes, editorHandler(st, h, cfg.token))},
+			{flowsLn, probes.Handler(h.Handler())},
+		})
+	}()
+
 	res, err := h.Boot(ctx)
 	if err != nil {
-		apiLn.Close()
-		flowsLn.Close()
-		return errors.Join(err, h.Shutdown())
+		stopServing()
+		return errors.Join(err, <-srvDone, h.Shutdown())
 	}
+	probes.SetReady()
 	if res.Interrupted > 0 {
 		slog.Warn("executions interrupted by the last shutdown", slog.Int64("count", res.Interrupted))
 	}
@@ -317,8 +341,23 @@ func runServer(ctx context.Context, cfg serverConfig, apiLn, flowsLn net.Listene
 		slog.Warn("this binary has no editor built in; only the API is served (build with `make build`)")
 	}
 
-	srvErr := serveHTTP(ctx, []listener{{apiLn, editorHandler(st, h, cfg.token)}, {flowsLn, h.Handler()}})
+	srvErr := <-srvDone
 	return errors.Join(srvErr, h.Shutdown())
+}
+
+// booting answers 503 while the server boots, so that the editor API (and
+// GET /api/health) only answers once the deployed flows have started.
+func booting(probes *health.Probes, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if probes.Starting() && strings.HasPrefix(r.URL.Path, "/api/") {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprintln(w, `{"error":"the server is starting"}`)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // editorHandler serves the editor listener: the API under /api/, and the
@@ -389,39 +428,38 @@ func load(path string) (*engine.CompiledFlow, *engine.EngineServices, error) {
 	return cf, svc, nil
 }
 
-// serve runs the engine and serves svc.HTTP on ln until ctx is cancelled or
-// either of them fails. On shutdown the HTTP server stops accepting requests
-// first, then the engine stops.
+// serve starts the flow and serves svc.HTTP, with the health and readiness
+// probes, on ln until ctx is cancelled or the server fails. The probes
+// answer from the start; the flow is ready once its triggers have started.
+// If one fails to start, serve returns its error. On shutdown readiness goes
+// 503, the HTTP server stops accepting requests, then the flow stops.
 func serve(ctx context.Context, cf *engine.CompiledFlow, svc *engine.EngineServices, ln net.Listener, sink engine.TraceSink) error {
-	runCtx, cancelRun := context.WithCancel(context.Background())
-	defer cancelRun()
-	runErr := make(chan error, 1)
-	go func() { runErr <- engine.Run(runCtx, cf, svc, sink) }()
-
-	srv := &http.Server{Handler: svc.HTTP, ReadHeaderTimeout: 10 * time.Second}
+	probes := health.New(func() health.Counts { return health.Counts{Running: 1} })
+	srv := &http.Server{Handler: probes.Handler(svc.HTTP), ReadHeaderTimeout: 10 * time.Second}
 	srvErr := make(chan error, 1)
 	go func() { srvErr <- srv.Serve(ln) }()
 
-	var errs []error
-	runDone := false
-	select {
-	case <-ctx.Done():
-	case err := <-srvErr:
-		errs = append(errs, fmt.Errorf("http server: %w", err))
-	case err := <-runErr:
-		// Run only returns early when a trigger fails to start.
-		errs = append(errs, err)
-		runDone = true
-	}
-
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 	defer cancel()
+	var errs []error
+	inst, err := engine.Start(cf, svc, sink)
+	if err != nil {
+		errs = append(errs, err)
+	} else {
+		probes.SetReady()
+		select {
+		case <-ctx.Done():
+		case err := <-srvErr:
+			errs = append(errs, fmt.Errorf("http server: %w", err))
+		}
+	}
+
+	probes.SetStopping()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		errs = append(errs, fmt.Errorf("http shutdown: %w", err))
 	}
-	if !runDone {
-		cancelRun()
-		errs = append(errs, <-runErr)
+	if inst != nil {
+		errs = append(errs, inst.Stop())
 	}
 	return errors.Join(errs...)
 }

@@ -226,10 +226,10 @@ When a trigger calls `emit(payload)`:
 
 ### 4.6 CLI
 `flowforge run [-addr :8080] [-log-format text|json] <flow.json>`:
-- Parses and compiles the flow against `DefaultRegistry` (all built-in nodes), serves `svc.HTTP` on `-addr`, and calls `engine.Run`.
+- Parses and compiles the flow against `DefaultRegistry` (all built-in nodes), serves `svc.HTTP` on `-addr`, and starts the flow (`engine.Start`). The same address answers the probes `GET /_flowforge/health` and `/_flowforge/ready` ([prod-v1.md](prod-v1.md) §4); `/_flowforge/` is reserved, so no `http_trigger` may use it.
 - Trace events go to **stdout** as JSON lines (`StdoutTraceSink`). `slog` output — including the `log` node — goes to **stderr**, with all levels enabled; `-log-format text|json` picks the format (default `text`).
 - Every finished execution also writes one log line (`RunLogSink`, §8): `msg=execution flow=… execution=… trigger=… status=completed|failed duration=… [error=…]`, at INFO or ERROR.
-- `SIGINT` / `SIGTERM` shut down gracefully: the HTTP server stops accepting requests (5 s grace), then the engine stops.
+- `SIGINT` / `SIGTERM` shut down gracefully: readiness turns `503`, the HTTP server stops accepting requests (5 s grace), then the engine stops.
 - Exit codes: `0` clean shutdown, `1` load/compile/runtime error, `2` usage error.
 
 `flowforge serve [-addr 127.0.0.1:8090] [-flows-addr :8080] [-data dir]` runs the server instead of one flow: the editor's API, and every deployed flow from the data directory; see [server-v1.md](server-v1.md) and [api-v1.md](api-v1.md). It uses the same exit codes.
@@ -370,11 +370,12 @@ Nodes that need data from elsewhere in the graph read `ctx.NodeResults[someNodeI
 Each lives in `backend/internal/nodes/<name>.go` and registers itself via `init()`.
 
 ### `http_trigger`
-- Config: `path` (string, required, must start with `/`), `method` (string, default `POST`, case-insensitive).
+- Config: `path` (string, required, must start with `/`, not under `/_flowforge/`; segments `{name}` are path parameters, [prod-v1.md](prod-v1.md) §5), `method` (string, default `POST`, case-insensitive).
 - `Init` requires `services.HTTP`; a missing mux is a load-time error.
-- Lifecycle: registers a handler with the engine's shared `HTTPMux` on `Start` and removes it on `Stop`. Each request becomes an `emit({"headers": ..., "body": ..., "query": ...})`:
+- Lifecycle: registers a handler with the engine's shared `HTTPMux` on `Start` and removes it on `Stop`. Each request becomes an `emit({"headers": ..., "query": ..., "params": ..., "body": ...})`:
   - `headers` — `map[string]any`, canonical header name → values joined with `", "`.
   - `query` — `map[string]any`, parameter → first value.
+  - `params` — `map[string]any`, path parameter name → URL-decoded segment (strings); `{}` when the path has none.
   - `body` — parsed JSON if `Content-Type` is `application/json` (or `+json`), otherwise the raw body as a string; `nil` if empty.
 - Responses: `202 Accepted` once `emit` returns without error. The flow's output is **not** returned to the caller — request/response flows are v2. Invalid JSON → `400`, body over 1 MiB → `413`, `emit` error → `500`.
 - The HTTP server is owned by the engine, not the node — see §12.
@@ -445,7 +446,7 @@ type Node interface {
 
 (Yes, this is a refinement of §3.2. I'm leaving §3.2 minimal so the *concept* is clear, and adding the services parameter here where the rationale is.)
 
-`HTTPMux` is a plain `http.Handler` keyed by exact method + path. Unlike `http.ServeMux` it supports removing routes, which `Stop` needs. A request to an unknown path gets `404`; a known path with the wrong method gets `405` with an `Allow` header. Registering the same method + path twice is an error. The mux does not listen itself: whoever runs the engine (the CLI, slice 10) mounts it in an `http.Server` on the configured address.
+`HTTPMux` is a plain `http.Handler` keyed by method + path pattern, a trie of path segments (literals and `{name}` parameters, [prod-v1.md](prod-v1.md) §5). Unlike `http.ServeMux` it supports removing routes, which `Stop` needs. Matching is on the escaped path, segment by segment, a literal before a parameter, backtracking when the literal branch does not lead to a route; among the matching routes the most specific one with the request's method wins, and its parameter values are set as `r.PathValue`. A parameter never matches an empty segment. A path no route matches gets `404`; one that matches only with other methods gets `405` with an `Allow` header. Registering a method + path of the same shape (same literals, parameters in the same places, whatever their names) twice is an error. The mux does not listen itself: whoever runs the engine (the CLI, slice 10) mounts it in an `http.Server` on the configured address.
 
 A server running many flows shares one route table between them. `mux.Owned(flowID)` returns a view of the mux that registers routes as that flow's: a clash with another flow's route names it (`route POST /orders is used by flow order-api`), and `Remove` only removes the view's own routes. Serving any view serves every route.
 

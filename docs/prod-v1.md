@@ -1,6 +1,6 @@
 # FlowForge Production Basics — Design v1
 
-Status: **Being implemented** (slice 1 done; §10)
+Status: **Being implemented** (slices 1–3 done; §10)
 Scope: Phase 4 — what a flow needs to run as a real service: API token auth, health checks, path parameters, request/response HTTP, variables and secrets, per-node timeouts and retries, and error handling.
 Audience: implementers of the engine, the nodes, the server and the editor.
 
@@ -93,11 +93,13 @@ For load balancers and Kubernetes probes, on the **flows listener** (where traff
 | `GET /_flowforge/ready` | `200 {"status": "ready", "flows": {"running": 12, "failed": 1}}` once boot is done (all deployed flows started or failed); `503 {"status": "starting"}` before, `503 {"status": "stopping"}` during shutdown. **Readiness.** |
 
 - A failed flow does **not** make the server not-ready: that would take every other flow out of the load balancer too. The counts are there for monitoring.
-- **`/_flowforge/` is reserved:** an `http_trigger` whose path starts with it fails to compile.
-- `flowforge run` serves the same two endpoints on its `-addr`.
+- Both listeners accept connections from the start, so the probes can see `starting`. Routes of flows that have already started are served during the boot.
+- `GET` and `HEAD` only (`405` otherwise); answers carry `Cache-Control: no-store`. Any other path under `/_flowforge/` is `404`.
+- **`/_flowforge/` is reserved:** an `http_trigger` whose path starts with it (or is `/_flowforge`) fails to compile, and the editor flags the path.
+- `flowforge run` serves the same two endpoints on its `-addr`: ready once the flow's triggers have started, with `{"running": 1, "failed": 0}`.
 
 ### 4.2 Editor listener
-`GET /api/health` stays as it is, unauthenticated (§3.2).
+`GET /api/health` stays as it is, unauthenticated (§3.2). While the server boots, every `/api/` request (health included) answers `503 {"error": "the server is starting"}` with `Retry-After: 1`, so `/api/health` keeps meaning "autostart is done".
 
 ---
 
@@ -114,6 +116,9 @@ The trigger's payload gains **`params`**: `{"id": "42"}`, values as strings, URL
 - Segment by segment; at each segment a **literal beats a parameter**: with `/orders/new` and `/orders/{id}` both registered, `/orders/new` goes to the first, `/orders/7` to the second.
 - Trailing slashes are significant, as today (`/orders/` ≠ `/orders`).
 - `404` / `405` as today: `405` when the path matches a route shape but not with this method.
+- The method takes part in matching: with `GET /orders/new` and `POST /orders/{id}`, `POST /orders/new` goes to the second.
+- Matching uses the escaped path, so `%2F` stays inside its segment (`/orders/a%2Fb` gives `id = "a/b"`). A parameter never matches an empty segment: `/orders/` does not match `/orders/{id}`.
+- The editor's test-run payload for an `http_trigger` pre-fills `params` with the path's parameter names.
 
 ### 5.4 Conflicts
 Two routes conflict when they have the same method and the **same shape**: equal literals and parameters in the same positions, whatever the names. `/orders/{id}` and `/orders/{orderId}` conflict; `/orders/{id}` and `/orders/new` do not. The conflict error names the flow holding the route, as in server-v1.md §4.3.

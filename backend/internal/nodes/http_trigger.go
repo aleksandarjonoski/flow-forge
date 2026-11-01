@@ -28,6 +28,7 @@ const maxBodyBytes = 1 << 20
 // Stop. See docs/engine-v1.md §11.
 type HTTPTrigger struct {
 	path   string
+	params []string // path parameter names
 	method string
 	mux    *engine.HTTPMux
 }
@@ -39,8 +40,12 @@ func (t *HTTPTrigger) Init(config map[string]any, services *engine.EngineService
 	if err != nil {
 		return err
 	}
-	if !strings.HasPrefix(path, "/") {
-		return fmt.Errorf("config %q must start with /, got %q", "path", path)
+	params, err := engine.RouteParams(path)
+	if err != nil {
+		return fmt.Errorf("config %q: %w", "path", err)
+	}
+	if strings.HasPrefix(path+"/", engine.ReservedPathPrefix) {
+		return fmt.Errorf("config %q must not start with %s, which FlowForge keeps for itself", "path", engine.ReservedPathPrefix)
 	}
 	method, err := stringConfig(config, "method", false, http.MethodPost)
 	if err != nil {
@@ -53,6 +58,7 @@ func (t *HTTPTrigger) Init(config map[string]any, services *engine.EngineService
 		return errors.New("engine services provide no HTTP mux")
 	}
 	t.path = path
+	t.params = params
 	t.method = strings.ToUpper(method)
 	t.mux = services.HTTP
 	return nil
@@ -85,7 +91,12 @@ func (t *HTTPTrigger) serve(w http.ResponseWriter, r *http.Request, emit engine.
 		query[k] = v[0]
 	}
 
-	if err := emit(engine.Payload{"headers": flattenHeaders(r.Header), "query": query, "body": body}); err != nil {
+	params := make(map[string]any, len(t.params))
+	for _, name := range t.params {
+		params[name] = r.PathValue(name)
+	}
+
+	if err := emit(engine.Payload{"headers": flattenHeaders(r.Header), "query": query, "params": params, "body": body}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

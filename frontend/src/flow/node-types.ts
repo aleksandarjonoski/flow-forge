@@ -74,7 +74,7 @@ export interface NodeTypeSpec {
    * Triggers only: an example of what the trigger emits, used to pre-fill
    * the payload of a test run (engine-v1.md §11).
    */
-  samplePayload?: () => Record<string, unknown>
+  samplePayload?: (config: Record<string, unknown>) => Record<string, unknown>
   /**
    * What the node outputs, as far as its type knows (engine-v1.md §11);
    * "input" for nodes that pass their input through unchanged; "declared"
@@ -96,6 +96,21 @@ const ANY_BODY = (note: string): Shape => ({ type: 'any', note })
 
 const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
 
+/**
+ * The parameter names of an http_trigger path, in order: the whole
+ * segments {name} (prod-v1.md §5.1). Malformed segments are left out; the
+ * engine reports them.
+ */
+export function pathParams(path: unknown): string[] {
+  if (typeof path !== 'string') return []
+  const names: string[] = []
+  for (const seg of path.split('/')) {
+    const m = /^\{([A-Za-z_][A-Za-z0-9_]*)\}$/.exec(seg)
+    if (m && !names.includes(m[1])) names.push(m[1])
+  }
+  return names
+}
+
 export const NODE_TYPES: readonly NodeTypeSpec[] = [
   {
     type: 'http_trigger',
@@ -108,7 +123,8 @@ export const NODE_TYPES: readonly NodeTypeSpec[] = [
         path: {
           type: 'string',
           title: 'Path',
-          description: 'URL path to listen on, e.g. /webhook.',
+          description:
+            'URL path to listen on, e.g. /webhook. A segment {name} is a parameter: /orders/{id} gives params.id.',
           pattern: '^/',
         },
         method: {
@@ -120,19 +136,26 @@ export const NODE_TYPES: readonly NodeTypeSpec[] = [
       },
       required: ['path'],
     },
-    samplePayload: () => ({
+    samplePayload: (config) => ({
       headers: { 'Content-Type': 'application/json' },
       query: {},
+      params: Object.fromEntries(pathParams(config.path).map((p) => [p, ''])),
       body: {},
     }),
-    output: {
+    output: (config) => ({
       type: 'object',
       fields: {
         headers: STRING_MAP,
         query: STRING_MAP,
+        params: {
+          type: 'object',
+          fields: Object.fromEntries(
+            pathParams(config.path).map((p) => [p, { type: 'string' }]),
+          ),
+        },
         body: ANY_BODY('whatever the caller sends'),
       },
-    },
+    }),
   },
   {
     type: 'cron_trigger',
@@ -342,6 +365,11 @@ function checkString(prop: StringProperty, value: unknown): string | undefined {
     return prop.pattern === '^/'
       ? 'Must start with /.'
       : `Must match ${prop.pattern}.`
+  }
+  // Trigger paths: FlowForge keeps /_flowforge/ for its probes
+  // (prod-v1.md §4.1).
+  if (prop.pattern === '^/' && `${value}/`.startsWith('/_flowforge/')) {
+    return 'Paths under /_flowforge/ are reserved.'
   }
   if (prop.format === 'uri' && !isHttpURL(value)) {
     return 'Must be an absolute http(s) URL.'

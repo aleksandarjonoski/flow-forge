@@ -227,7 +227,7 @@ The editor's API, on the editor listener. Phase 2's rules carry over ([api-v1.md
 
 | Method + path | Does |
 |---|---|
-| `GET /api/health` | `200 {"status":"ok"}` once the store is open and autostart is done. |
+| `GET /api/health` | `200 {"status":"ok"}` once the store is open and autostart is done (before that, from Phase 4, `503`). |
 | `GET /api/flows` | List every flow: summary + state (§6.3), ordered by name. |
 | `POST /api/flows` | Create a flow from `{"flow": {…}}`. `201` with the stored flow. `409` if the ID exists. |
 | `GET /api/flows/{id}` | The stored flow (§6.3). `404` if unknown. |
