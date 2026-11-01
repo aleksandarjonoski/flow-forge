@@ -103,7 +103,15 @@ What FlowForge *can do* at each milestone. Each phase is a meaningful product st
 - Full design: [server-v1.md](server-v1.md).
 
 ### Phase 4 — Production Basics (next)
-- What a flow needs to be a real microservice: token auth for the API, request/response HTTP (return the flow's result, status codes, headers), path parameters, config and secrets from the environment, error handling (error edges), per-node timeouts and retries, health endpoints.
+- What a flow needs to be a real microservice: token auth for the API, health and readiness endpoints, path parameters, request/response HTTP (an `http_response` node sets status, headers and body), server variables and secrets (`${vars.X}`, masked in traces), per-node timeouts and retries, and error edges.
+- Flow JSON 1.1 (node `run` settings, error edges).
+- Full design: [prod-v1.md](prod-v1.md).
+
+### Phase 4.5 — REST & OpenAPI
+- Typed REST in both directions, from OpenAPI (Swagger) definitions, as in TIBCO BW6 (*Invoke REST API*, REST service bindings).
+- **Outgoing:** an *Invoke REST API* node: pick an operation of an imported API; path, query, header and body inputs filled in the visual mapper against the API's schemas; a typed response per status code, so later nodes see real fields.
+- **Incoming:** import an OpenAPI file to generate one `http_trigger` + `http_response` per operation, with request and response schemas filled in.
+- Imported API definitions are stored on the server and shared by flows — the first shared resource.
 
 ### Phase 5 — Messaging & Composition
 - In-memory pub/sub between flows (`publish` + `topic_trigger`) behind a small broker interface; NATS (embedded or external) as the second backend.
@@ -417,14 +425,33 @@ Designed in [server-v1.md](server-v1.md); built in this order:
 **Phase 3 done when:** on a machine with nothing installed, copying the `flowforge` binary and running `flowforge serve` gives an editor at `http://127.0.0.1:8090`; a flow built there can be deployed, called on `:8080`, and its executions opened in History; after restarting the server, the flow is running again.
 
 ### Phase 4 — Production Basics (next)
-Slices are planned when Phase 3 is done; the scope:
-- **API token auth** — a static token (`-api-token` / env) required on the editor listener, so the editor can be used on a remote server without an SSH tunnel.
-- **Request/response HTTP** — return the flow's result to the caller, with status code and headers chosen by the flow (today `http_trigger` always answers `202`).
-- **Path parameters** — `/orders/{id}` routes in `http_trigger`.
-- **Config and secrets from the environment** — per-environment values (URLs, passwords) kept out of the flow file.
-- **Error handling** — error edges (`edge.type: "error"`) route a failure to a handler subgraph, e.g. to build an error response.
-- **Per-node timeouts and retries** — engine-enforced, with backoff.
-- **Health endpoints** for load balancers and Kubernetes.
+Designed in [prod-v1.md](prod-v1.md) (draft, for review); to be built in this order:
+
+| # | Slice | Description | Status |
+|---|---|---|---|
+| 1 | API token auth | `FLOWFORGE_API_TOKEN` or `-api-token-file` (never a flag value), `flowforge token`; `401` on `/api/` except health; refuse a non-loopback editor listener without a token unless `-insecure-no-auth`; sign-in dialog in the editor. | |
+| 2 | Health and readiness | `/_flowforge/health` (liveness) and `/_flowforge/ready` (`503` until boot is done and during shutdown) on the flows listener and in `flowforge run`; `/_flowforge/` reserved for trigger paths. | |
+| 3 | Path parameters | `/orders/{id}` segments in `http_trigger`, `params` in the payload, literal-beats-parameter matching, conflicts by route shape. | |
+| 4 | Request/response | `http_trigger` `respond: "flow"` + `timeout`; new `http_response` node (status/body expressions or mapping mode, headers), sent when it runs, one per execution; `500`/`504` fallbacks without internal details; response shown in test runs. | |
+| 5 | Variables and secrets | Server variables from `FLOWFORGE_VAR_*` or the store, `/api/variables`; `vars.X`, `{{.vars.X}}`, `${vars.X}` resolved at compile; `env` removed from expressions; secret values never returned and masked in traces and logs. | |
+| 6 | Variables in the editor | Variables tab, `vars` as a source in the data view and mapper, offer to redeploy flows using a changed variable. | |
+| 7 | Flow JSON 1.1, timeouts and retries | Version 1.1 in both parsers (editor saves 1.1); node `run.timeout` and `run.retry` enforced by the executor with traced attempts; `http_request` `failOn`; Run settings in the node editor. | |
+| 8 | Error edges | `error` output on action nodes (`sourceHandle: "error"`), red edges; failed node's downstream skipped and the handler gets `{error, input}`; handled runs complete. | |
+
+**Phase 4 done when:** a flow on a server reached only with a token takes `GET /orders/{id}`, calls a backend whose URL and key are server variables (the key never visible in History) with a timeout and retries, and answers `200` with a mapped body — or `502` through an error edge when the backend stays down; a load balancer checks `/_flowforge/ready`.
+
+### Phase 4.5 — REST & OpenAPI
+Designed when Phase 4 is done; the planned scope:
+
+| # | Slice | Description |
+|---|---|---|
+| 1 | API definitions on the server | Import OpenAPI 3 (JSON or YAML) and Swagger 2 files; store and list them as shared resources; resolve `$ref`s. |
+| 2 | Schema subset for OpenAPI | Grow the data schema subset (data-v1.md §3) or simplify on import: `$ref`, `oneOf`/`anyOf`, `nullable`, formats — decide in the design. |
+| 3 | Mapping into a node's input | The node editor's Mapping tab for nodes whose inputs have a schema (data-v1.md §9), needed by the next slice. |
+| 4 | *Invoke REST API* node | Choose API + operation; base URL and auth from variables (`${vars.X}`); path/query/header/body mapped against the operation's schemas; typed output per status code; Phase 4 timeouts, retries, `failOn` and error edges apply. |
+| 5 | Generate flows from an API | For each operation (or a chosen subset): an `http_trigger` (`respond: "flow"`, path with parameters) and an `http_response` with the response schema, ready to fill in. |
+
+Builds on Phase 4 (variables and secrets, `http_response`, path parameters, error edges) and Phase 2.5 (schemas and the mapper).
 
 ### Phase 5 — Messaging & Composition
 - **Broker interface + in-memory pub/sub** — `Publish(topic, msg)` / `Subscribe(topic)` owned by the engine; `publish` action and `topic_trigger`; fan-out to every subscriber; per-topic policy when a subscriber is slow (wait or drop with a counted warning); the subscriber's run carries the publisher's correlation ID.
@@ -493,6 +520,7 @@ flow-forge/
 │   ├── api-v1.md            ← editor ↔ backend API
 │   ├── data-v1.md           ← schemas, parse_json, mapper
 │   ├── server-v1.md         ← server, storage, run history
+│   ├── prod-v1.md           ← auth, HTTP responses, variables, errors
 │   └── plugin-sdk.md        ← (future) plugin author guide
 │
 ├── backend/
@@ -535,7 +563,7 @@ flow-forge/
 Decisions deferred until the relevant phase forces them:
 
 1. ~~**Graph library for the frontend**~~ — decided: Rete.js v2 ([ADR 0001](adr/0001-graph-library.md)).
-2. **Auth model** — a static API token in Phase 4; OIDC + RBAC in Phase 10. Until Phase 4, single-user, no auth, editor on loopback.
+2. **Auth model** — a static API token in Phase 4 ([prod-v1.md](prod-v1.md) §3); OIDC + RBAC in Phase 10. Until Phase 4, single-user, no auth, editor on loopback.
 3. **Multi-tenant model** — out of scope for self-hosted v1. Revisit if a hosted offering emerges.
 4. **Flow versioning** — Phase 3 keeps the latest document only, with a revision number. Versioning + history is Phase 10.
 5. **Cluster runtime coordination** — Raft (embedded), etcd (external), or Postgres advisory locks? Decide in Phase 10.
