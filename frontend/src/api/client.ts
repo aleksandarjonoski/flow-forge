@@ -1,4 +1,5 @@
 import type { Flow } from '../flow/types.ts'
+import { apiFetch } from './auth.ts'
 
 // Client for the backend API (docs/api-v1.md). In development the Vite dev
 // server proxies /api to `flowforge serve`.
@@ -56,7 +57,7 @@ export async function runFlow(
   trigger: string,
   payload: Record<string, unknown>,
   onEvent: (event: TraceEvent) => void = () => {},
-  fetchFn: typeof fetch = fetch,
+  fetchFn: typeof fetch = apiFetch,
 ): Promise<RunOutcome> {
   let res: Response
   try {

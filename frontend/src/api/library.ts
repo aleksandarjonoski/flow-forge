@@ -1,6 +1,7 @@
 import { parseFlow, serializeFlow } from '../flow/file.ts'
 import { withEdgeIds } from '../flow/edit.ts'
 import type { Flow } from '../flow/types.ts'
+import { apiFetch } from './auth.ts'
 import { UNREACHABLE, type TraceEvent } from './client.ts'
 
 // Client for the flow library and run history (docs/api-v1.md, "Flow
@@ -67,7 +68,7 @@ export type Result<T> =
   { ok: true; value: T } | { ok: false; error: LibraryError }
 
 /** Lists every stored flow. */
-export function listFlows(fetchFn: typeof fetch = fetch) {
+export function listFlows(fetchFn: typeof fetch = apiFetch) {
   return call<FlowSummary[]>(
     fetchFn,
     'GET',
@@ -78,12 +79,12 @@ export function listFlows(fetchFn: typeof fetch = fetch) {
 }
 
 /** Loads one stored flow with its document. */
-export function getFlow(id: string, fetchFn: typeof fetch = fetch) {
+export function getFlow(id: string, fetchFn: typeof fetch = apiFetch) {
   return call(fetchFn, 'GET', flowPath(id), undefined, storedFlow)
 }
 
 /** Stores a new flow; it keeps its ID. */
-export function createFlow(flow: Flow, fetchFn: typeof fetch = fetch) {
+export function createFlow(flow: Flow, fetchFn: typeof fetch = apiFetch) {
   return call(fetchFn, 'POST', '/api/flows', { flow }, storedFlow)
 }
 
@@ -94,23 +95,23 @@ export function createFlow(flow: Flow, fetchFn: typeof fetch = fetch) {
 export function saveFlow(
   flow: Flow,
   revision: number,
-  fetchFn: typeof fetch = fetch,
+  fetchFn: typeof fetch = apiFetch,
 ) {
   return call(fetchFn, 'PUT', flowPath(flow.id), { flow, revision }, storedFlow)
 }
 
 /** Deploys the latest saved revision. */
-export function startFlow(id: string, fetchFn: typeof fetch = fetch) {
+export function startFlow(id: string, fetchFn: typeof fetch = apiFetch) {
   return call(fetchFn, 'POST', `${flowPath(id)}/start`, undefined, storedFlow)
 }
 
 /** Stops and undeploys a flow. */
-export function stopFlow(id: string, fetchFn: typeof fetch = fetch) {
+export function stopFlow(id: string, fetchFn: typeof fetch = apiFetch) {
   return call(fetchFn, 'POST', `${flowPath(id)}/stop`, undefined, storedFlow)
 }
 
 /** Deletes a flow with its run history. */
-export function deleteFlow(id: string, fetchFn: typeof fetch = fetch) {
+export function deleteFlow(id: string, fetchFn: typeof fetch = apiFetch) {
   return call(fetchFn, 'DELETE', flowPath(id), undefined, () => undefined)
 }
 
@@ -118,7 +119,7 @@ export function deleteFlow(id: string, fetchFn: typeof fetch = fetch) {
 export function listExecutions(
   flowId: string,
   options: { limit?: number; before?: string } = {},
-  fetchFn: typeof fetch = fetch,
+  fetchFn: typeof fetch = apiFetch,
 ) {
   const q = new URLSearchParams({ flow: flowId })
   if (options.limit) q.set('limit', String(options.limit))
@@ -133,7 +134,7 @@ export function listExecutions(
 }
 
 /** One execution with its trace. */
-export function getExecution(id: string, fetchFn: typeof fetch = fetch) {
+export function getExecution(id: string, fetchFn: typeof fetch = apiFetch) {
   return call(
     fetchFn,
     'GET',

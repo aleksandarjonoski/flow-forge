@@ -34,6 +34,9 @@ type Options struct {
 	// runs are served.
 	Store *store.Store
 	Host  *host.Host
+	// Token, when set, is required on every request but GET /api/health
+	// (RequireToken).
+	Token string
 }
 
 // NewHandler returns the API handler. Test runs are compiled against reg.
@@ -43,6 +46,9 @@ func NewHandler(reg *engine.Registry, opts Options) http.Handler {
 	mux.HandleFunc("POST /api/flows/run", h.run)
 	if opts.Store != nil && opts.Host != nil {
 		(&library{store: opts.Store, host: opts.Host}).register(mux)
+	}
+	if opts.Token != "" {
+		return RequireToken(opts.Token, mux)
 	}
 	return mux
 }

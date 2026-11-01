@@ -424,12 +424,12 @@ Designed in [server-v1.md](server-v1.md); built in this order:
 
 **Phase 3 done when:** on a machine with nothing installed, copying the `flowforge` binary and running `flowforge serve` gives an editor at `http://127.0.0.1:8090`; a flow built there can be deployed, called on `:8080`, and its executions opened in History; after restarting the server, the flow is running again.
 
-### Phase 4 — Production Basics (next)
-Designed in [prod-v1.md](prod-v1.md) (draft, for review); to be built in this order:
+### Phase 4 — Production Basics (in progress)
+Designed in [prod-v1.md](prod-v1.md); built in this order:
 
 | # | Slice | Description | Status |
 |---|---|---|---|
-| 1 | API token auth | `FLOWFORGE_API_TOKEN` or `-api-token-file` (never a flag value), `flowforge token`; `401` on `/api/` except health; refuse a non-loopback editor listener without a token unless `-insecure-no-auth`; sign-in dialog in the editor. | |
+| 1 | API token auth | `FLOWFORGE_API_TOKEN` or `-api-token-file` (never a flag value), `flowforge token`; `401` on `/api/` except health; refuse a non-loopback editor listener without a token unless `-insecure-no-auth`; sign-in dialog in the editor. | ✅ done |
 | 2 | Health and readiness | `/_flowforge/health` (liveness) and `/_flowforge/ready` (`503` until boot is done and during shutdown) on the flows listener and in `flowforge run`; `/_flowforge/` reserved for trigger paths. | |
 | 3 | Path parameters | `/orders/{id}` segments in `http_trigger`, `params` in the payload, literal-beats-parameter matching, conflicts by route shape. | |
 | 4 | Request/response | `http_trigger` `respond: "flow"` + `timeout`; new `http_response` node (status/body expressions or mapping mode, headers), sent when it runs, one per execution; `500`/`504` fallbacks without internal details; response shown in test runs. | |

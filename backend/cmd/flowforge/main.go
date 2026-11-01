@@ -5,6 +5,8 @@
 //	flowforge run [-addr :8080] [-log-format text|json] <flow.json>
 //	flowforge serve [-addr 127.0.0.1:8090] [-flows-addr :8080] [-data dir]
 //	                [-keep-executions 1000] [-log-format text|json]
+//	                [-api-token-file path] [-insecure-no-auth]
+//	flowforge token
 package main
 
 import (
@@ -19,6 +21,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 	// Time zone data built in, so CRON_TZ schedules work on Windows and in
@@ -40,7 +43,11 @@ const usage = `usage:
       run a flow until interrupted
   flowforge serve [-addr 127.0.0.1:8090] [-flows-addr :8080] [-data dir]
                   [-keep-executions 1000] [-log-format text|json]
-      serve the editor API (local use only) and the deployed flows`
+                  [-api-token-file path] [-insecure-no-auth]
+      serve the editor API and the deployed flows; the API needs the token
+      in $FLOWFORGE_API_TOKEN or -api-token-file, if one is set
+  flowforge token
+      print a new random API token`
 
 // shutdownGrace is how long in-flight HTTP requests get on shutdown.
 const shutdownGrace = 5 * time.Second
@@ -61,6 +68,8 @@ func cli(args []string, stderr io.Writer) int {
 		return runCmd(args[1:], stderr)
 	case "serve":
 		return serveCmd(args[1:], stderr)
+	case "token":
+		return tokenCmd(args[1:], os.Stdout, stderr)
 	default:
 		fmt.Fprintln(stderr, usage)
 		return 2
@@ -130,11 +139,13 @@ func runCmd(args []string, stderr io.Writer) int {
 // flow, until interrupted. See docs/server-v1.md.
 func serveCmd(args []string, stderr io.Writer) int {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
-	addr := fs.String("addr", "127.0.0.1:8090", "listen address for the editor API (no auth: keep it local)")
+	addr := fs.String("addr", "127.0.0.1:8090", "listen address for the editor and its API")
 	flowsAddr := fs.String("flows-addr", ":8080", "listen address for the deployed flows' http_trigger routes")
 	data := fs.String("data", "", "data directory (default $FLOWFORGE_DATA, else ~/.flowforge)")
 	keep := fs.Int("keep-executions", history.DefaultKeep, "executions kept per flow in the run history (0 keeps all)")
 	logFormat := fs.String("log-format", "text", "log format on stderr: text or json")
+	tokenFile := fs.String("api-token-file", "", "file holding the API token (default $FLOWFORGE_API_TOKEN)")
+	insecure := fs.Bool("insecure-no-auth", false, "allow the editor API on a non-loopback -addr without a token")
 	if code := parseFlags(fs, args, 0, stderr); code >= 0 {
 		return code
 	}
@@ -142,6 +153,11 @@ func serveCmd(args []string, stderr io.Writer) int {
 		return code
 	}
 
+	token, err := apiToken(*tokenFile)
+	if err != nil {
+		fmt.Fprintf(stderr, "flowforge: %v\n", err)
+		return 1
+	}
 	dir, err := dataDir(*data)
 	if err != nil {
 		fmt.Fprintf(stderr, "flowforge: %v\n", err)
@@ -150,6 +166,13 @@ func serveCmd(args []string, stderr io.Writer) int {
 	apiLn, err := net.Listen("tcp", *addr)
 	if err != nil {
 		fmt.Fprintf(stderr, "flowforge: %v\n", err)
+		return 1
+	}
+	if token == "" && !*insecure && !isLoopback(apiLn.Addr()) {
+		apiLn.Close()
+		fmt.Fprintf(stderr, "flowforge: the editor API would be reachable from the network at %s without authentication.\n"+
+			"Set an API token in FLOWFORGE_API_TOKEN or a file named by -api-token-file (make one with `flowforge token`),\n"+
+			"or bind -addr to 127.0.0.1. -insecure-no-auth serves it without a token anyway.\n", apiLn.Addr())
 		return 1
 	}
 	flowsLn, err := net.Listen("tcp", *flowsAddr)
@@ -161,12 +184,44 @@ func serveCmd(args []string, stderr io.Writer) int {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := runServer(ctx, serverConfig{dir: dir, keep: *keep}, apiLn, flowsLn); err != nil {
+	if err := runServer(ctx, serverConfig{dir: dir, keep: *keep, token: token}, apiLn, flowsLn); err != nil {
 		fmt.Fprintf(stderr, "flowforge: %v\n", err)
 		return 1
 	}
 	slog.Info("flowforge stopped")
 	return 0
+}
+
+// tokenCmd implements `flowforge token`: print a new random API token.
+func tokenCmd(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("token", flag.ContinueOnError)
+	if code := parseFlags(fs, args, 0, stderr); code >= 0 {
+		return code
+	}
+	fmt.Fprintln(stdout, api.NewToken())
+	return 0
+}
+
+// apiToken resolves the API token: the contents of the -api-token-file
+// file, else $FLOWFORGE_API_TOKEN, else none. Surrounding whitespace is
+// trimmed. A token that is too short is an error (prod-v1.md §3.1).
+func apiToken(file string) (string, error) {
+	token := os.Getenv("FLOWFORGE_API_TOKEN")
+	if file != "" {
+		b, err := os.ReadFile(file)
+		if err != nil {
+			return "", fmt.Errorf("API token: %w", err)
+		}
+		token = string(b)
+	}
+	token = strings.TrimSpace(token)
+	if token == "" {
+		if file != "" {
+			return "", fmt.Errorf("API token: %s is empty", file)
+		}
+		return "", nil
+	}
+	return token, api.CheckToken(token)
 }
 
 // setLogger makes the default slog logger write to stderr in format (text or
@@ -204,8 +259,9 @@ func dataDir(flagValue string) (string, error) {
 
 // serverConfig is what `flowforge serve` was asked for.
 type serverConfig struct {
-	dir  string // data directory
-	keep int    // executions kept per flow
+	dir   string // data directory
+	keep  int    // executions kept per flow
+	token string // API token; empty serves the API without authentication
 }
 
 // runServer opens the store in cfg.dir, starts the deployed flows and serves
@@ -243,8 +299,17 @@ func runServer(ctx context.Context, cfg serverConfig, apiLn, flowsLn net.Listene
 	slog.Info("flows started", slog.Int("started", res.Started), slog.Int("failed", res.Failed))
 
 	apiAddr := apiLn.Addr().String()
-	if !isLoopback(apiLn.Addr()) {
-		slog.Warn("the editor API has no authentication and is reachable from the network", slog.String("addr", apiAddr))
+	switch {
+	case isLoopback(apiLn.Addr()):
+	case cfg.token == "":
+		slog.Warn("the editor API has no authentication and is reachable from the network (-insecure-no-auth)",
+			slog.String("addr", apiAddr))
+	default:
+		slog.Warn("the API token travels in a header: serve the editor over HTTPS through a reverse proxy",
+			slog.String("addr", apiAddr))
+	}
+	if cfg.token != "" {
+		slog.Info("the editor API needs the API token")
 	}
 	slog.Info("flowforge serving",
 		slog.String("data", dir), slog.String("editor", "http://"+apiAddr), slog.String("flows", flowsLn.Addr().String()))
@@ -252,15 +317,15 @@ func runServer(ctx context.Context, cfg serverConfig, apiLn, flowsLn net.Listene
 		slog.Warn("this binary has no editor built in; only the API is served (build with `make build`)")
 	}
 
-	srvErr := serveHTTP(ctx, []listener{{apiLn, editorHandler(st, h)}, {flowsLn, h.Handler()}})
+	srvErr := serveHTTP(ctx, []listener{{apiLn, editorHandler(st, h, cfg.token)}, {flowsLn, h.Handler()}})
 	return errors.Join(srvErr, h.Shutdown())
 }
 
 // editorHandler serves the editor listener: the API under /api/, and the
 // editor built into the binary everywhere else (server-v1.md §8).
-func editorHandler(st *store.Store, h *host.Host) http.Handler {
+func editorHandler(st *store.Store, h *host.Host, token string) http.Handler {
 	mux := http.NewServeMux()
-	mux.Handle("/api/", api.NewHandler(engine.DefaultRegistry, api.Options{Store: st, Host: h}))
+	mux.Handle("/api/", api.NewHandler(engine.DefaultRegistry, api.Options{Store: st, Host: h, Token: token}))
 	mux.Handle("/", webui.Handler())
 	return mux
 }

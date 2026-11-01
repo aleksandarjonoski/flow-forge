@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite" // registers the "sqlite" driver
@@ -61,9 +62,20 @@ func Open(dir string) (*Store, error) {
 		return nil, err
 	}
 
+	// A URI path must be absolute: a relative one would be read as the
+	// authority ("file://data/…"). On Windows it becomes /C:/….
+	abs, err := filepath.Abs(filepath.Join(dir, DBFile))
+	if err != nil {
+		lock.Close()
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+	path := filepath.ToSlash(abs)
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
 	dsn := (&url.URL{
 		Scheme: "file",
-		Path:   filepath.Join(dir, DBFile),
+		Path:   path,
 		RawQuery: url.Values{"_pragma": {
 			"foreign_keys(1)",
 			"busy_timeout(5000)",

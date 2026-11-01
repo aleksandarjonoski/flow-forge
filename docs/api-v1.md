@@ -7,9 +7,10 @@ This is the contract between the visual editor (Layer 1) and the backend (Layer 
 
 ## Serving
 
-`flowforge serve [-addr 127.0.0.1:8090] [-flows-addr :8080] [-data dir] [-keep-executions 1000] [-log-format text|json]` serves the API on `-addr`, and the `http_trigger` routes of every deployed flow on `-flows-addr` ([server-v1.md](server-v1.md) §2). Flows and run history live in the data directory: `-data`, else `$FLOWFORGE_DATA`, else `~/.flowforge`.
+`flowforge serve [-addr 127.0.0.1:8090] [-flows-addr :8080] [-data dir] [-keep-executions 1000] [-log-format text|json] [-api-token-file path] [-insecure-no-auth]` serves the API on `-addr`, and the `http_trigger` routes of every deployed flow on `-flows-addr` ([server-v1.md](server-v1.md) §2). Flows and run history live in the data directory: `-data`, else `$FLOWFORGE_DATA`, else `~/.flowforge`.
 
-- **Local use only.** There is no authentication, and a test run executes whatever flow it is given: `http_request` nodes can call any URL, and `transform` expressions can read the server's environment (`env`). So the default address is loopback. Binding to another interface is possible with `-addr`, but should not be done on an untrusted network.
+- **Authentication** ([prod-v1.md](prod-v1.md) §3). With an API token configured (`$FLOWFORGE_API_TOKEN`, or the file named by `-api-token-file`, which wins), every request under `/api/` except `GET /api/health` needs `Authorization: Bearer <token>`; otherwise `401` with `WWW-Authenticate: Bearer`. `flowforge token` prints a new token; tokens shorter than 16 characters are refused at startup.
+- **No token, local use only.** Without a token there is no authentication, and a test run executes whatever flow it is given: `http_request` nodes can call any URL, and `transform` expressions can read the server's environment (`env`). So the default address is loopback, and `serve` refuses to start on a non-loopback `-addr` without a token unless `-insecure-no-auth` is given.
 - During development the Vite dev server proxies `/api/*` to `http://127.0.0.1:8090`, so the editor and the API share an origin and no CORS is needed.
 - All bodies are JSON (`Content-Type: application/json`). Request bodies are limited to 1 MiB.
 - Errors use one shape: `{"error": "<message>", "problems": ["<detail>", …]}`. `problems` is present when there is more than one thing to report (e.g. every validation problem in a flow).

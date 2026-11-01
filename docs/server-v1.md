@@ -342,10 +342,10 @@ The editor never takes a newer revision from the library list: the revision stay
 
 ## 9. Security
 
-Unchanged from Phase 2, and stated again because the server now runs flows permanently:
-- The **editor listener has no authentication** and can deploy any flow, including ones that call any URL or read the server's environment. It binds to `127.0.0.1` by default. To use the editor on a remote server, use an SSH tunnel (`ssh -L 8090:127.0.0.1:8090 server`). Binding it elsewhere logs a warning at startup.
+As built in Phase 3:
+- The **editor listener had no authentication** and can deploy any flow, including ones that call any URL or read the server's environment. It binds to `127.0.0.1` by default. To use the editor on a remote server, use an SSH tunnel (`ssh -L 8090:127.0.0.1:8090 server`). Binding it elsewhere logged a warning at startup.
 - The **flows listener** serves only the routes of running flows; nothing on it changes or reveals the server's state.
-- Token authentication for the API is the first item of Phase 4.
+- Phase 4 adds an API token and refuses a non-loopback editor listener without one ([prod-v1.md](prod-v1.md) §3).
 
 ---
 
@@ -354,7 +354,9 @@ Unchanged from Phase 2, and stated again because the server now runs flows perma
 ```
 flowforge serve [-addr 127.0.0.1:8090] [-flows-addr :8080] [-data ~/.flowforge]
                 [-keep-executions 1000] [-log-format text|json]
+                [-api-token-file path] [-insecure-no-auth]     (Phase 4)
 flowforge run [-addr :8080] [-log-format text|json] <flow.json>
+flowforge token                                                (Phase 4)
 ```
 
 Exit codes as today: `0` clean shutdown, `1` load or runtime error (including a locked data directory or a too-new database), `2` usage error.

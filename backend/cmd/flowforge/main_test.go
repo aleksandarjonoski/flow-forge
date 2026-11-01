@@ -153,6 +153,11 @@ type server struct {
 
 func startServer(t *testing.T, dir string) *server {
 	t.Helper()
+	return startServerConfig(t, serverConfig{dir: dir, keep: 100})
+}
+
+func startServerConfig(t *testing.T, cfg serverConfig) *server {
+	t.Helper()
 	apiLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -168,7 +173,7 @@ func startServer(t *testing.T, dir string) *server {
 		cancel: cancel,
 		done:   make(chan error, 1),
 	}
-	go func() { s.done <- runServer(ctx, serverConfig{dir: dir, keep: 100}, apiLn, flowsLn) }()
+	go func() { s.done <- runServer(ctx, cfg, apiLn, flowsLn) }()
 	t.Cleanup(func() { s.stop(t) })
 	return s
 }
@@ -357,5 +362,93 @@ func TestCLI_LogFormat(t *testing.T) {
 	var rec map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil || rec["msg"] != "hello" || rec["k"] != "v" {
 		t.Errorf("json log = %q (%v)", buf.String(), err)
+	}
+}
+
+func TestCLI_Token(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := tokenCmd(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr.String())
+	}
+	if token := strings.TrimSpace(stdout.String()); len(token) != 43 {
+		t.Errorf("token = %q, want 43 characters of base64url", token)
+	}
+	if code := cli([]string{"token", "extra"}, &stderr); code != 2 {
+		t.Errorf("token with an argument: exit %d, want 2", code)
+	}
+}
+
+func TestAPIToken(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, content string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	good := write("good", "  file-token-0123456789\n")
+	empty := write("empty", "\n")
+
+	t.Setenv("FLOWFORGE_API_TOKEN", "")
+	if got, err := apiToken(""); got != "" || err != nil {
+		t.Errorf("none: %q, %v", got, err)
+	}
+	t.Setenv("FLOWFORGE_API_TOKEN", " env-token-0123456789 ")
+	if got, err := apiToken(""); got != "env-token-0123456789" || err != nil {
+		t.Errorf("env: %q, %v", got, err)
+	}
+	if got, err := apiToken(good); got != "file-token-0123456789" || err != nil {
+		t.Errorf("file beats env: %q, %v", got, err)
+	}
+	if _, err := apiToken(empty); err == nil || !strings.Contains(err.Error(), "empty") {
+		t.Errorf("empty file: %v", err)
+	}
+	if _, err := apiToken(filepath.Join(dir, "missing")); err == nil {
+		t.Error("missing file: no error")
+	}
+	t.Setenv("FLOWFORGE_API_TOKEN", "short")
+	if _, err := apiToken(""); err == nil || !strings.Contains(err.Error(), "at least 16") {
+		t.Errorf("short: %v", err)
+	}
+}
+
+func TestCLI_ServeRefusesNetworkWithoutToken(t *testing.T) {
+	t.Setenv("FLOWFORGE_API_TOKEN", "")
+	var stderr bytes.Buffer
+	code := cli([]string{"serve", "-addr", "0.0.0.0:0", "-flows-addr", "127.0.0.1:0", "-data", t.TempDir()}, &stderr)
+	if code != 1 || !strings.Contains(stderr.String(), "FLOWFORGE_API_TOKEN") {
+		t.Errorf("exit %d, stderr %q; want 1 and how to set a token", code, stderr.String())
+	}
+}
+
+func TestRunServer_Token(t *testing.T) {
+	const token = "test-token-0123456789"
+	s := startServerConfig(t, serverConfig{dir: t.TempDir(), keep: 100, token: token})
+
+	if code := call(t, "GET", s.api+"/api/health", "", nil); code != http.StatusOK {
+		t.Errorf("health without a token = %d, want 200", code)
+	}
+	if code := call(t, "GET", s.api+"/api/flows", "", nil); code != http.StatusUnauthorized {
+		t.Errorf("flows without a token = %d, want 401", code)
+	}
+	resp, err := http.Get(s.api + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("editor page without a token = %d, want 200", resp.StatusCode)
+	}
+
+	req, _ := http.NewRequest("GET", s.api+"/api/flows", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("flows with the token = %d, want 200", resp.StatusCode)
 	}
 }

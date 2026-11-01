@@ -11,6 +11,7 @@ import {
   setNodeName,
   withEdgeIds,
 } from '../flow/edit.ts'
+import { onUnauthorized, tokens } from '../api/auth.ts'
 import { runFlow, type TraceEvent } from '../api/client.ts'
 import {
   createFlow as createStored,
@@ -58,6 +59,8 @@ import type { FfRunDialog, RunRequest } from './ff-run-dialog.ts'
 import './ff-run-dialog.ts'
 import type { RunState } from './ff-run-panel.ts'
 import './ff-run-panel.ts'
+import type { FfSignIn } from './ff-sign-in.ts'
+import './ff-sign-in.ts'
 
 // The editor opens with the hello example; New starts an empty flow.
 const initialFileName = 'hello.flow.json'
@@ -364,6 +367,12 @@ export class FfApp extends LitElement {
 
   private libraryTimer?: ReturnType<typeof setInterval>
 
+  /** Whether an API token is kept, so there is something to sign out of. */
+  @state()
+  private signedIn = tokens.get() !== undefined
+
+  private offUnauthorized?: () => void
+
   // Increments per test run, so a slow earlier run cannot overwrite the
   // result of a later one.
   private runSeq = 0
@@ -384,6 +393,9 @@ export class FfApp extends LitElement {
   @query('ff-run-dialog')
   private runDialog!: FfRunDialog
 
+  @query('ff-sign-in')
+  private signInDialog!: FfSignIn
+
   private get dirty(): boolean {
     return this.flow !== this.savedFlow
   }
@@ -398,6 +410,8 @@ export class FfApp extends LitElement {
     window.addEventListener('keydown', this.onKeydown)
     window.addEventListener('beforeunload', this.onBeforeUnload)
     window.addEventListener('hashchange', this.onHashChange)
+    // The server wants a token: ask for it (prod-v1.md §3.4).
+    this.offUnauthorized = onUnauthorized(() => this.signInDialog?.show())
     this.libraryTimer = setInterval(() => {
       if (this.leftTab === 'flows' && !document.hidden) {
         void this.refreshLibrary()
@@ -414,6 +428,7 @@ export class FfApp extends LitElement {
     window.removeEventListener('keydown', this.onKeydown)
     window.removeEventListener('beforeunload', this.onBeforeUnload)
     window.removeEventListener('hashchange', this.onHashChange)
+    this.offUnauthorized?.()
     clearInterval(this.libraryTimer)
   }
 
@@ -523,6 +538,18 @@ export class FfApp extends LitElement {
           hidden
           @change=${this.onFileChosen}
         />
+        ${
+          this.signedIn
+            ? html`<span class="sep"></span>
+                <button
+                  @click=${this.signOut}
+                  title="Forget the API token in this browser"
+                >
+                  Sign out
+                </button>`
+            : nothing
+        }
+        <ff-sign-in @signed-in=${this.onSignedIn}></ff-sign-in>
       </header>
       ${this.renderMessage()}
       <div class="workspace">
@@ -977,12 +1004,31 @@ export class FfApp extends LitElement {
       return
     }
     const r = await getFlow(id)
+    if (!r.ok && r.error.status === 401) {
+      // The sign-in dialog is showing; the flow opens after signing in.
+      return
+    }
     if (!r.ok) {
       this.showError(`Could not open flow ${id}: ${r.error.error}`)
       this.setHash(this.stored?.id)
       return
     }
     this.loadStored(r.value)
+  }
+
+  private onSignedIn = () => {
+    this.signedIn = true
+    this.message = undefined
+    void this.refreshLibrary()
+    const id = flowIdFromHash(location.hash)
+    if (id && id !== this.stored?.id) void this.openStored(id, true)
+  }
+
+  private signOut = () => {
+    tokens.clear()
+    this.signedIn = false
+    // A server that needs the token asks for it again.
+    void this.refreshLibrary()
   }
 
   private loadStored(s: StoredFlow) {

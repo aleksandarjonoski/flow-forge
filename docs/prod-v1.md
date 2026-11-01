@@ -1,6 +1,6 @@
 # FlowForge Production Basics — Design v1
 
-Status: **Draft — for review**
+Status: **Being implemented** (slice 1 done; §10)
 Scope: Phase 4 — what a flow needs to run as a real service: API token auth, health checks, path parameters, request/response HTTP, variables and secrets, per-node timeouts and retries, and error handling.
 Audience: implementers of the engine, the nodes, the server and the editor.
 
@@ -48,9 +48,9 @@ Rules:
 ## 3. API Token Authentication
 
 ### 3.1 Configuration
-- The token comes from the environment, **`FLOWFORGE_API_TOKEN`**, or from a file: **`-api-token-file <path>`** (contents trimmed). There is deliberately no flag that takes the token itself: command lines are visible to other users in `ps`.
+- The token comes from the environment, **`FLOWFORGE_API_TOKEN`**, or from a file: **`-api-token-file <path>`** (contents trimmed). The file wins when both are set; an empty or unreadable file is an error. There is deliberately no flag that takes the token itself: command lines are visible to other users in `ps`.
 - **`flowforge token`** prints a new random token (32 random bytes, base64url) to set up with.
-- A token shorter than 16 characters is refused at startup.
+- A token shorter than 16 characters is refused at startup (exit 1).
 
 ### 3.2 What it protects
 - With a token configured, every request under **`/api/`** on the editor listener needs `Authorization: Bearer <token>`. Otherwise: `401 {"error": "…"}` with `WWW-Authenticate: Bearer`. The comparison is constant-time.
@@ -63,11 +63,22 @@ Phase 3 only warned when the editor listener was bound to a non-loopback address
 - Loopback without a token works as today, for local development.
 
 ### 3.4 Editor
-- On a `401`, the editor shows a small **sign-in dialog** asking for the token. It is kept in `sessionStorage` (per tab, gone when the tab closes), or in `localStorage` if *Remember on this computer* is ticked, and sent on every API call.
-- A **Sign out** item clears it. A wrong token shows "token not accepted".
+- On a `401`, the editor shows a small **sign-in dialog** asking for the token. The token is checked with the server (`GET /api/flows`) before it is kept: in `sessionStorage` (per tab, gone when the tab closes), and also in `localStorage` if *Remember on this computer* is ticked. It is sent on every API call.
+- A **Sign out** button clears it everywhere. A wrong token shows "Token not accepted."
+- A link to a stored flow (`#/flows/<id>`) opened without a token keeps its hash and opens the flow after signing in.
 
 ### 3.5 TLS
 The token travels in a header, so on a network it must go over HTTPS. FlowForge does not terminate TLS itself in this version; the docs show a reverse proxy in front of the editor listener (Caddy, two lines with automatic certificates; nginx as an alternative). Binding to a non-loopback address logs a reminder.
+
+For example, with Caddy on the same machine and the editor left on loopback (`flowforge serve` with the defaults and `FLOWFORGE_API_TOKEN` set), a `Caddyfile` of
+
+```
+flowforge.example.com {
+	reverse_proxy 127.0.0.1:8090
+}
+```
+
+serves the editor at `https://flowforge.example.com` with an automatic certificate. The flows listener (`:8080`) is proxied the same way, under its own name, if its endpoints should be HTTPS too.
 
 ---
 

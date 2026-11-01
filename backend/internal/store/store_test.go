@@ -69,6 +69,18 @@ func TestOpen_CreatesDirectoryAndSchema(t *testing.T) {
 	}
 }
 
+func TestOpen_RelativeDirectory(t *testing.T) {
+	t.Chdir(t.TempDir())
+	s, err := Open("data")
+	if err != nil {
+		t.Fatalf("Open(relative) = %v", err)
+	}
+	s.Close()
+	if _, err := os.Stat(filepath.Join("data", DBFile)); err != nil {
+		t.Errorf("database not in the relative directory: %v", err)
+	}
+}
+
 func TestOpen_ReopenKeepsData(t *testing.T) {
 	dir := t.TempDir()
 	s, err := Open(dir)
